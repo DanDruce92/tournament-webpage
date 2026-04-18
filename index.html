@@ -6,22 +6,19 @@
 <title>Tournament Manager</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
 
-<!-- ─── STEP 1: Create a free Firebase project at https://console.firebase.google.com
-     STEP 2: Enable Realtime Database (start in test mode)
-     STEP 3: Replace the values below with your project's config ─── -->
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
   import { getDatabase, ref, set, update, onValue, get }
     from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 
   const firebaseConfig = {
-    apiKey:            "REPLACE_apiKey",
-    authDomain:        "REPLACE_authDomain",
-    databaseURL:       "REPLACE_databaseURL",
-    projectId:         "REPLACE_projectId",
-    storageBucket:     "REPLACE_storageBucket",
-    messagingSenderId: "REPLACE_messagingSenderId",
-    appId:             "REPLACE_appId"
+    apiKey:            "AIzaSyABS6vq8xzpYUqVjWjS62UJJvQCXKhF7jI",
+    authDomain:        "tournament-website-444ce.firebaseapp.com",
+    databaseURL:       "https://tournament-website-444ce-default-rtdb.firebaseio.com",
+    projectId:         "tournament-website-444ce",
+    storageBucket:     "tournament-website-444ce.firebasestorage.app",
+    messagingSenderId: "585977756357",
+    appId:             "1:585977756357:web:5fba6d428c9f5c306a4eac"
   };
 
   const app = initializeApp(firebaseConfig);
