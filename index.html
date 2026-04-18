@@ -55,6 +55,7 @@
       applyUI();
       if (!isEditMode) startViewerListener();
     } else {
+      initPlayerSelect();
       updatePlayerInputs();
     }
   }
@@ -98,7 +99,101 @@
     saveTimer = setTimeout(() => update(ref(db,'tournaments/'+tourneyId), fields), 400);
   }
 
+  // ── CSV helpers ────────────────────────────────────────────────────────────
+  function downloadCsv(filename, content) {
+    const a = Object.assign(document.createElement('a'), {
+      href: URL.createObjectURL(new Blob([content], {type:'text/csv'})),
+      download: filename
+    });
+    a.click();
+  }
+
+  function parseCsvLine(line) {
+    const result=[]; let cur='', inQ=false;
+    for (const ch of line) {
+      if (ch==='"') inQ=!inQ;
+      else if (ch===',' && !inQ) { result.push(cur.trim()); cur=''; }
+      else cur+=ch;
+    }
+    result.push(cur.trim());
+    return result;
+  }
+
+  window.downloadPlayerTemplate = function() {
+    const n = parseInt(document.getElementById('playerCount').value);
+    const rows = ['Name'];
+    for (let i=1; i<=n; i++) rows.push(`Player ${i}`);
+    downloadCsv('players-template.csv', rows.join('\r\n'));
+  };
+
+  window.uploadPlayerCsv = function(file) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = e => {
+      const lines = e.target.result.split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
+      const names = lines[0].toLowerCase()==='name' ? lines.slice(1) : lines;
+      if (!names.length) return;
+      const count = Math.min(Math.max(names.length, 3), 40);
+      document.getElementById('playerCount').value = count;
+      updatePlayerInputs();
+      const inputs = document.querySelectorAll('#playerGrid input');
+      names.forEach((name,i) => { if (inputs[i]) inputs[i].value = name; });
+    };
+    reader.readAsText(file);
+  };
+
+  window.downloadScoresCsv = function() {
+    if (!state.rounds.length) return;
+    const rows = ['Round,Match,Home Player,Home Score,Away Score,Away Player'];
+    state.rounds.forEach((round,ri) => {
+      round.forEach((fix,fi) => {
+        if (fix.home>=state.players.length||fix.away>=state.players.length) return;
+        rows.push([
+          ri+1, fi+1,
+          `"${state.players[fix.home]}"`,
+          fix.homeScore!==null ? fix.homeScore : '',
+          fix.awayScore!==null ? fix.awayScore : '',
+          `"${state.players[fix.away]}"`
+        ].join(','));
+      });
+    });
+    downloadCsv(`${state.name||'scores'}.csv`, rows.join('\r\n'));
+  };
+
+  window.uploadScoresCsv = function(file) {
+    if (!file||!state.rounds.length) return;
+    const reader = new FileReader();
+    reader.onload = e => {
+      const lines = e.target.result.split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
+      lines.slice(1).forEach(line => {
+        const cols = parseCsvLine(line);
+        const ri=parseInt(cols[0])-1, fi=parseInt(cols[1])-1;
+        if (isNaN(ri)||isNaN(fi)||!state.rounds[ri]||!state.rounds[ri][fi]) return;
+        const hs=cols[3]!==''?parseInt(cols[3]):null;
+        const as=cols[4]!==''?parseInt(cols[4]):null;
+        state.rounds[ri][fi].homeScore = (!isNaN(hs)&&hs!==null)?hs:null;
+        state.rounds[ri][fi].awayScore = (!isNaN(as)&&as!==null)?as:null;
+      });
+      renderFixtures();
+      renderTable();
+      renderOverview();
+      scheduleSave({rounds:state.rounds});
+    };
+    reader.readAsText(file);
+  };
+
   // ── Setup ──────────────────────────────────────────────────────────────────
+  function initPlayerSelect() {
+    const sel = document.getElementById('playerCount');
+    sel.innerHTML = '';
+    for (let i=3; i<=40; i++) {
+      const opt = document.createElement('option');
+      opt.value = i; opt.textContent = i + ' Players';
+      if (i===6) opt.selected = true;
+      sel.appendChild(opt);
+    }
+  }
+
   window.updatePlayerInputs = function() {
     const n = parseInt(document.getElementById('playerCount').value);
     const grid = document.getElementById('playerGrid');
@@ -161,11 +256,14 @@
 
   function renderFixtures() {
     const cont = document.getElementById('fixtures-content');
+    const csvBar = document.getElementById('fixtures-csv-bar');
     if (!state.rounds.length) {
       cont.innerHTML = `<div class="empty-state"><span class="empty-icon">◫</span>No fixtures yet
         <p>Set up your tournament to generate the schedule</p></div>`;
+      if (csvBar) csvBar.style.display='none';
       return;
     }
+    if (csvBar) csvBar.style.display = isEditMode ? 'flex' : 'none';
     let html='';
     state.rounds.forEach((round,ri) => {
       html += `<div class="round-block"><div class="round-label">Round ${ri+1}</div>`;
@@ -266,54 +364,78 @@
     const el=document.getElementById('knockout-setup');
     if (!el) return;
     if (!isEditMode || !state.players.length || state.knockout) { el.style.display='none'; return; }
-    const maxAdvancing = Math.min(state.players.length, 8);
-    const options = [2,4,8].filter(n=>n<=maxAdvancing);
+    const n = state.players.length;
+    // Offer bracket sizes from 2 up to next power-of-2 >= n, max 32
+    const sizes=[];
+    for (let s=2; s<=32; s*=2) { if (s>=2) sizes.push(s); }
+    const options = sizes.filter(s=>s<=Math.max(n,2));
     el.style.display='block';
+    const labelFor = s => {
+      if (s<=2)  return 'Final only';
+      if (s<=4)  return 'Semis + Final';
+      if (s<=8)  return 'QF → Final';
+      if (s<=16) return 'R16 → Final';
+      return 'R32 → Final';
+    };
     el.innerHTML=`
       <div class="ko-setup-divider"></div>
       <div class="ko-setup-card">
         <div class="ko-setup-title">Start Knockout Round</div>
-        <div class="ko-setup-desc">Choose how many top players advance from the league table into a knockout bracket.</div>
+        <div class="ko-setup-desc">Choose the bracket size. Players below the cutoff get a bye in round one.</div>
         <div class="ko-options">
-          ${options.map(n=>`<button class="ko-option-btn" onclick="startKnockout(${n})">
-            Top ${n}<span>${n===2?'Final only':n===4?'Semis + Final':'QF + Semis + Final'}</span>
+          ${options.map(s=>`<button class="ko-option-btn" onclick="startKnockout(${s})">
+            Last ${s}<span>${labelFor(s)}</span>
           </button>`).join('')}
         </div>
       </div>`;
   }
 
-  // ── Knockout generation ────────────────────────────────────────────────────
-  // Standard seedings ensure #1 and #2 can only meet in the final
-  const SEEDS = { 2:[0,1], 4:[0,3,1,2], 8:[0,7,3,4,1,6,2,5] };
+  // ── Knockout generation (supports byes for non-power-of-2 entries) ─────────
+  // Build a power-of-2 bracket; excess slots become byes (null player)
+  function buildSeedings(bracketSize, standings) {
+    // Standard bracket seeding for a power-of-2 bracket
+    // Produces pairs: (1v bracketSize), (bracketSize/2+1 v bracketSize/2), etc.
+    function seed(size) {
+      if (size===1) return [0];
+      const half=size/2;
+      const top=seed(half);
+      return top.flatMap(s=>[s, size-1-s]);
+    }
+    const order=seed(bracketSize);
+    return order.map(i=>standings[i]?.idx??null); // null = bye
+  }
 
-  window.startKnockout = function(advancing) {
-    const standings = calcTable();
-    const seedings  = SEEDS[advancing];
-    const numRounds = Math.log2(advancing);
-    const rounds    = [];
+  window.startKnockout = function(bracketSize) {
+    const standings=calcTable();
+    const seedings=buildSeedings(bracketSize, standings);
+    const numRounds=Math.log2(bracketSize);
+    const rounds=[];
 
-    // First round — seed the players
+    // First round
     const firstRound=[];
-    for (let i=0; i<advancing/2; i++) {
-      const s1=seedings[i*2], s2=seedings[i*2+1];
-      firstRound.push({
-        p1: standings[s1]?.idx ?? null,
-        p2: standings[s2]?.idx ?? null,
-        s1:null, s2:null
-      });
+    for (let i=0; i<bracketSize/2; i++) {
+      const p1=seedings[i*2]??null, p2=seedings[i*2+1]??null;
+      // Auto-advance if one side is a bye
+      firstRound.push({p1, p2, s1:null, s2:null, bye: p1===null||p2===null});
     }
     rounds.push(firstRound);
 
-    // Subsequent rounds — TBD slots
+    // Subsequent rounds
     for (let r=1; r<numRounds; r++) {
-      const round=[];
-      for (let m=0; m<Math.pow(2, numRounds-r-1); m++) {
-        round.push({p1:null,p2:null,s1:null,s2:null});
-      }
-      rounds.push(round);
+      const count=Math.pow(2, numRounds-r-1);
+      rounds.push(Array.from({length:count}, ()=>({p1:null,p2:null,s1:null,s2:null,bye:false})));
     }
 
-    state.knockout = { advancing, rounds };
+    // Auto-advance players who have a bye in round 1
+    firstRound.forEach((match,fi)=>{
+      if (!match.bye) return;
+      const winner=match.p1!==null?match.p1:match.p2;
+      if (winner===null) return;
+      const nextFi=Math.floor(fi/2), slot=fi%2===0?'p1':'p2';
+      rounds[1][nextFi][slot]=winner;
+    });
+
+    state.knockout={bracketSize, rounds};
     scheduleSave({knockout:state.knockout});
     renderKnockout();
     renderOverview();
@@ -346,6 +468,7 @@
     rounds.forEach((round,ri)=>{
       html+=`<div class="round-block"><div class="round-label">${knockoutRoundName(ri,total)}</div>`;
       round.forEach((match,fi)=>{
+        if (match.bye) return; // auto-advanced; don't show
         const n1 = match.p1!==null ? state.players[match.p1] : '<span class="tbd">TBD</span>';
         const n2 = match.p2!==null ? state.players[match.p2] : '<span class="tbd">TBD</span>';
         const canEdit = isEditMode && match.p1!==null && match.p2!==null;
@@ -717,6 +840,21 @@
   .error-msg{font-size:12px;color:var(--loss-text);margin-top:6px;display:none;}
   .error-msg.visible{display:block;}
 
+  /* How-to instructions */
+  .how-to{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:24px 28px;margin-bottom:24px;max-width:640px;}
+  .how-to-title{font-size:13px;font-weight:600;margin-bottom:12px;color:var(--text);}
+  .how-to-steps{padding-left:18px;display:flex;flex-direction:column;gap:8px;}
+  .how-to-steps li{font-size:13px;color:var(--text-mid);line-height:1.6;}
+  .how-to-steps li strong{color:var(--text);}
+
+  /* CSV buttons */
+  .csv-row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;}
+  .btn-csv{display:inline-flex;align-items:center;gap:6px;padding:7px 12px;background:var(--bg);border:1px solid var(--border-strong);border-radius:6px;font-family:'Inter',sans-serif;font-size:12px;font-weight:500;color:var(--text-mid);cursor:pointer;transition:border-color 0.15s,color 0.15s;white-space:nowrap;}
+  .btn-csv:hover{border-color:var(--accent);color:var(--text);}
+
+  .csv-toolbar{display:flex;align-items:center;gap:10px;margin-bottom:16px;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:7px;flex-wrap:wrap;}
+  .csv-toolbar-label{font-size:12px;font-weight:500;color:var(--text-dim);margin-right:4px;}
+
   /* Overview */
   .ov-section{margin-bottom:36px;}
   .ov-heading{font-size:11px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:14px;display:flex;align-items:center;gap:12px;}
@@ -774,6 +912,17 @@
 
   <!-- SETUP -->
   <div id="panel-setup" class="panel active">
+    <div class="how-to">
+      <div class="how-to-title">How it works</div>
+      <ol class="how-to-steps">
+        <li><strong>Create</strong> — Enter a tournament name, choose how many players, and fill in their names. Or download the CSV template, fill it in, and upload it.</li>
+        <li><strong>Share</strong> — After generating fixtures you'll get a link anyone can bookmark to follow scores live, plus a private Edit Code for whoever is entering results.</li>
+        <li><strong>Enter scores</strong> — Use the Fixtures tab to enter match results. The league table updates automatically. Download the scores sheet as CSV if you prefer to fill it in offline, then re-upload.</li>
+        <li><strong>Knockout</strong> — Once the league stage is done, go to League Table and click <em>Start Knockout Round</em> to seed players into a bracket. Winners advance automatically.</li>
+        <li><strong>Overview</strong> — The Overview tab shows the table and knockout bracket on one page — ideal for a display screen.</li>
+      </ol>
+    </div>
+
     <div class="setup-card">
       <h2>New Tournament</h2>
       <div class="field">
@@ -782,20 +931,17 @@
       </div>
       <div class="field">
         <label>Number of Players</label>
-        <select id="playerCount" onchange="updatePlayerInputs()">
-          <option value="3">3 Players</option>
-          <option value="4">4 Players</option>
-          <option value="5">5 Players</option>
-          <option value="6" selected>6 Players</option>
-          <option value="7">7 Players</option>
-          <option value="8">8 Players</option>
-          <option value="9">9 Players</option>
-          <option value="10">10 Players</option>
-        </select>
+        <select id="playerCount" onchange="updatePlayerInputs()"></select>
       </div>
       <div class="field">
         <label>Player Names</label>
         <div class="player-grid" id="playerGrid"></div>
+        <div class="csv-row">
+          <button class="btn-csv" onclick="downloadPlayerTemplate()">↓ Download CSV Template</button>
+          <label class="btn-csv">↑ Upload CSV
+            <input type="file" accept=".csv,.txt" style="display:none" onchange="uploadPlayerCsv(this.files[0]);this.value=''">
+          </label>
+        </div>
       </div>
       <button class="btn" onclick="generateTournament()">Generate Fixtures &amp; Get Share Link</button>
     </div>
@@ -813,6 +959,13 @@
 
   <!-- FIXTURES -->
   <div id="panel-fixtures" class="panel">
+    <div id="fixtures-csv-bar" class="csv-toolbar" style="display:none">
+      <span class="csv-toolbar-label">Scores CSV</span>
+      <button class="btn-csv" onclick="downloadScoresCsv()">↓ Download</button>
+      <label class="btn-csv">↑ Upload &amp; Import
+        <input type="file" accept=".csv,.txt" style="display:none" onchange="uploadScoresCsv(this.files[0]);this.value=''">
+      </label>
+    </div>
     <div id="fixtures-content">
       <div class="empty-state">
         <span class="empty-icon">◫</span>No fixtures yet
