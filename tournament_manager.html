@@ -39,7 +39,15 @@
   header {
     background: var(--surface);
     border-bottom: 1px solid var(--border);
-    padding: 28px 32px;
+    padding: 20px 32px;
+  }
+
+  .header-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
   }
 
   h1 {
@@ -56,13 +64,43 @@
     font-weight: 400;
   }
 
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+  }
+
+  .mode-badge {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 20px;
+    letter-spacing: 0.3px;
+  }
+  .mode-badge.view { background: #fef3c7; color: #92680a; }
+  .mode-badge.edit { background: var(--win-bg); color: var(--win-text); }
+
+  .btn-secondary {
+    padding: 7px 14px;
+    background: transparent;
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    color: var(--text);
+    font-family: 'Inter', sans-serif;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .btn-secondary:hover { background: var(--bg); border-color: var(--accent); }
+
   .container {
     max-width: 900px;
     margin: 0 auto;
     padding: 32px 24px;
   }
 
-  /* TABS */
   .tabs {
     display: flex;
     gap: 0;
@@ -84,15 +122,11 @@
     margin-bottom: -1px;
   }
   .tab:hover { color: var(--text); }
-  .tab.active {
-    color: var(--text);
-    border-bottom-color: var(--text);
-  }
+  .tab.active { color: var(--text); border-bottom-color: var(--text); }
 
   .panel { display: none; }
   .panel.active { display: block; }
 
-  /* SETUP */
   .setup-card {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -119,7 +153,7 @@
     letter-spacing: 0.2px;
   }
 
-  select, input[type="text"], input[type="number"] {
+  select, input[type="text"], input[type="number"], input[type="password"] {
     width: 100%;
     background: var(--surface);
     border: 1px solid var(--border);
@@ -163,9 +197,7 @@
     pointer-events: none;
     z-index: 1;
   }
-  .player-input input {
-    padding-left: 28px;
-  }
+  .player-input input { padding-left: 28px; }
 
   .btn {
     display: inline-block;
@@ -186,7 +218,6 @@
   .btn:hover { background: var(--accent-hover); }
   .btn:active { transform: scale(0.99); }
 
-  /* FIXTURES */
   .round-block { margin-bottom: 32px; }
 
   .round-label {
@@ -254,7 +285,7 @@
     transition: border-color 0.15s, box-shadow 0.15s;
   }
   .score-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(26,26,24,0.06); }
-  .score-input:read-only { opacity: 0.25; cursor: not-allowed; background: var(--bg); }
+  .score-input[readonly] { opacity: 0.35; cursor: not-allowed; background: var(--bg); }
 
   .result-badge {
     font-size: 10px;
@@ -270,7 +301,6 @@
   .result-D { background: var(--draw-bg); color: var(--draw-text); }
   .result-empty { visibility: hidden; }
 
-  /* TABLE */
   .table-wrap { overflow-x: auto; }
 
   table {
@@ -282,9 +312,7 @@
     overflow: hidden;
   }
 
-  thead tr {
-    border-bottom: 1px solid var(--border);
-  }
+  thead tr { border-bottom: 1px solid var(--border); }
 
   th {
     padding: 11px 16px;
@@ -345,14 +373,92 @@
     margin-bottom: 12px;
     opacity: 0.4;
   }
-  .empty-state p {
-    margin-top: 6px;
-    font-size: 12px;
-    color: var(--text-dim);
+  .empty-state p { margin-top: 6px; font-size: 12px; color: var(--text-dim); }
+
+  /* MODALS */
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.45);
+    z-index: 100;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+  }
+  .modal-overlay.open { display: flex; }
+
+  .modal-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 28px;
+    width: 100%;
+    max-width: 460px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.12);
   }
 
+  .modal-box h2 {
+    font-size: 15px;
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+
+  .modal-box .modal-desc {
+    font-size: 12px;
+    color: var(--text-mid);
+    margin-bottom: 20px;
+  }
+
+  .modal-field { margin-bottom: 16px; }
+
+  .copy-row {
+    display: flex;
+    gap: 8px;
+  }
+
+  .copy-row input {
+    flex: 1;
+    font-size: 12px;
+    background: var(--bg);
+    color: var(--text-mid);
+    padding: 8px 10px;
+  }
+
+  .btn-copy {
+    padding: 8px 14px;
+    background: var(--accent);
+    border: none;
+    border-radius: 6px;
+    color: #fff;
+    font-family: 'Inter', sans-serif;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+    transition: background 0.15s;
+  }
+  .btn-copy:hover { background: var(--accent-hover); }
+  .btn-copy.copied { background: var(--win-text); }
+
+  .modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 20px;
+  }
+
+  .error-msg {
+    font-size: 12px;
+    color: var(--loss-text);
+    margin-top: 6px;
+    display: none;
+  }
+  .error-msg.visible { display: block; }
+
   @media (max-width: 600px) {
-    header { padding: 20px 16px; }
+    header { padding: 16px; }
     .container { padding: 20px 12px; }
     .setup-card { padding: 20px; }
     .player-grid { grid-template-columns: 1fr; }
@@ -369,12 +475,21 @@
 <body>
 
 <header>
-  <h1>Tournament Manager</h1>
-  <div class="subtitle">Round-robin fixture generator &amp; league table</div>
+  <div class="header-inner">
+    <div>
+      <h1 id="tournament-title">Tournament Manager</h1>
+      <div class="subtitle" id="header-subtitle">Round-robin fixture generator &amp; league table</div>
+    </div>
+    <div class="header-actions" id="header-actions" style="display:none">
+      <span id="mode-badge" class="mode-badge"></span>
+      <button class="btn-secondary" id="btn-unlock" onclick="openEditModal()" style="display:none">Unlock Editing</button>
+      <button class="btn-secondary" id="btn-share" onclick="openShareModal()">Share</button>
+    </div>
+  </div>
 </header>
 
 <div class="container">
-  <div class="tabs">
+  <div class="tabs" id="tab-bar">
     <button class="tab active" onclick="switchTab('setup')">Setup</button>
     <button class="tab" onclick="switchTab('fixtures')">Fixtures</button>
     <button class="tab" onclick="switchTab('table')">League Table</button>
@@ -384,6 +499,10 @@
   <div id="panel-setup" class="panel active">
     <div class="setup-card">
       <h2>New Tournament</h2>
+      <div class="field">
+        <label>Tournament Name</label>
+        <input type="text" id="tournamentName" placeholder="e.g. Friday Night League">
+      </div>
       <div class="field">
         <label>Number of Players</label>
         <select id="playerCount" onchange="updatePlayerInputs()">
@@ -401,7 +520,7 @@
         <label>Player Names</label>
         <div class="player-grid" id="playerGrid"></div>
       </div>
-      <button class="btn" onclick="generateTournament()">Generate Fixtures</button>
+      <button class="btn" onclick="generateTournament()">Generate Fixtures &amp; Get Share Link</button>
     </div>
   </div>
 
@@ -442,20 +561,160 @@
   </div>
 </div>
 
-<script>
-let state = {
-  players: [],
-  rounds: []
-};
+<!-- SHARE MODAL -->
+<div id="share-modal" class="modal-overlay" onclick="overlayClose(event,'share-modal')">
+  <div class="modal-box" onclick="event.stopPropagation()">
+    <h2>Share Tournament</h2>
+    <p class="modal-desc">Give viewers the <strong>View Link</strong>. Keep the <strong>Edit Link</strong> private — anyone with it can enter scores.</p>
 
-function switchTab(name) {
-  document.querySelectorAll('.tab').forEach((t, i) => {
-    t.classList.toggle('active', ['setup', 'fixtures', 'table'][i] === name);
-  });
-  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
-  document.getElementById('panel-' + name).classList.add('active');
-  if (name === 'table') renderTable();
+    <div class="modal-field">
+      <label>View Link (read-only)</label>
+      <div class="copy-row">
+        <input type="text" id="view-link-input" readonly>
+        <button class="btn-copy" onclick="copyLink('view-link-input', this)">Copy</button>
+      </div>
+    </div>
+
+    <div class="modal-field">
+      <label>Edit Link (keep private)</label>
+      <div class="copy-row">
+        <input type="text" id="edit-link-input" readonly>
+        <button class="btn-copy" onclick="copyLink('edit-link-input', this)">Copy</button>
+      </div>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="closeModal('share-modal')">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- UNLOCK MODAL -->
+<div id="edit-modal" class="modal-overlay" onclick="overlayClose(event,'edit-modal')">
+  <div class="modal-box" onclick="event.stopPropagation()">
+    <h2>Unlock Editing</h2>
+    <p class="modal-desc">Paste the Edit Code from your edit link to enable score entry.</p>
+    <div class="modal-field">
+      <label>Edit Code</label>
+      <input type="password" id="edit-code-input" placeholder="Paste edit code here..." onkeydown="if(event.key==='Enter')tryUnlock()">
+      <div class="error-msg" id="unlock-error">Incorrect edit code. Try again.</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="closeModal('edit-modal')">Cancel</button>
+      <button class="btn" style="width:auto;margin-top:0" onclick="tryUnlock()">Unlock</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let state = { name: '', players: [], rounds: [] };
+let isEditMode = false;
+let editToken = null;
+
+// ── URL state helpers ───────────────────────────────────────────────────────
+
+function encodeState(s) {
+  const json = JSON.stringify(s);
+  const bytes = new TextEncoder().encode(json);
+  let bin = '';
+  bytes.forEach(b => bin += String.fromCharCode(b));
+  return btoa(bin);
 }
+
+function decodeState(str) {
+  const bin = atob(str);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+
+function parseHash() {
+  const hash = location.hash.slice(1);
+  const params = {};
+  hash.split('&').forEach(p => {
+    const eq = p.indexOf('=');
+    if (eq > -1) params[p.slice(0, eq)] = p.slice(eq + 1);
+  });
+  return params;
+}
+
+function baseUrl() {
+  return location.href.split('#')[0];
+}
+
+function buildViewUrl() {
+  return baseUrl() + '#d=' + encodeState(state);
+}
+
+function buildEditUrl() {
+  return baseUrl() + '#d=' + encodeState(state) + '&t=' + editToken;
+}
+
+function saveToUrl() {
+  const hash = isEditMode
+    ? 'd=' + encodeState(state) + '&t=' + editToken
+    : 'd=' + encodeState(state);
+  history.replaceState(null, '', '#' + hash);
+}
+
+function generateToken() {
+  const arr = new Uint8Array(12);
+  crypto.getRandomValues(arr);
+  return [...arr].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// ── Init ────────────────────────────────────────────────────────────────────
+
+function init() {
+  const params = parseHash();
+  if (params.d) {
+    try {
+      state = decodeState(params.d);
+      if (params.t) {
+        isEditMode = true;
+        editToken = params.t;
+      }
+      updateHeader();
+      renderFixtures();
+      renderTable();
+      switchTab('fixtures');
+    } catch (e) {
+      updatePlayerInputs();
+    }
+  } else {
+    updatePlayerInputs();
+  }
+}
+
+function updateHeader() {
+  const title = document.getElementById('tournament-title');
+  const subtitle = document.getElementById('header-subtitle');
+  const actions = document.getElementById('header-actions');
+  const badge = document.getElementById('mode-badge');
+  const btnUnlock = document.getElementById('btn-unlock');
+
+  title.textContent = state.name || 'Tournament Manager';
+  subtitle.textContent = state.players.length
+    ? state.players.length + ' players · Round-robin'
+    : 'Round-robin fixture generator & league table';
+
+  if (state.players.length) {
+    actions.style.display = 'flex';
+    if (isEditMode) {
+      badge.textContent = 'Editing';
+      badge.className = 'mode-badge edit';
+      btnUnlock.style.display = 'none';
+    } else {
+      badge.textContent = 'View Only';
+      badge.className = 'mode-badge view';
+      btnUnlock.style.display = '';
+    }
+  } else {
+    actions.style.display = 'none';
+  }
+}
+
+// ── Setup ───────────────────────────────────────────────────────────────────
 
 function updatePlayerInputs() {
   const n = parseInt(document.getElementById('playerCount').value);
@@ -472,7 +731,7 @@ function updatePlayerInputs() {
 
 function generateRoundRobin(n) {
   const players = [...Array(n).keys()];
-  if (n % 2 !== 0) players.push(n); // BYE
+  if (n % 2 !== 0) players.push(n);
   const total = players.length;
   const rounds = [];
   const fixed = players[0];
@@ -497,12 +756,23 @@ function generateRoundRobin(n) {
 function generateTournament() {
   const n = parseInt(document.getElementById('playerCount').value);
   const inputs = document.querySelectorAll('#playerGrid input');
-  state.players = [...inputs].map((inp, i) => inp.value.trim() || `Player ${i + 1}`);
-  state.rounds = generateRoundRobin(n);
+  const name = document.getElementById('tournamentName').value.trim() || 'Tournament';
+  state = {
+    name,
+    players: [...inputs].map((inp, i) => inp.value.trim() || `Player ${i + 1}`),
+    rounds: generateRoundRobin(n)
+  };
+  isEditMode = true;
+  editToken = generateToken();
+  saveToUrl();
+  updateHeader();
   renderFixtures();
   renderTable();
   switchTab('fixtures');
+  openShareModal();
 }
+
+// ── Fixtures ─────────────────────────────────────────────────────────────────
 
 function playerName(idx) {
   return idx >= state.players.length ? 'BYE' : state.players[idx];
@@ -515,6 +785,7 @@ function renderFixtures() {
     return;
   }
 
+  const ro = isEditMode ? '' : 'readonly';
   let html = '';
   state.rounds.forEach((round, ri) => {
     html += `<div class="round-block"><div class="round-label">Round ${ri + 1}</div>`;
@@ -524,17 +795,17 @@ function renderFixtures() {
       const aName = playerName(fix.away);
       const hResult = getResult(fix.homeScore, fix.awayScore, 'home');
       const aResult = getResult(fix.homeScore, fix.awayScore, 'away');
-      const ro = isBye ? 'readonly' : '';
+      const scoreRo = (isBye || !isEditMode) ? 'readonly' : '';
 
       html += `<div class="fixture-row${isBye ? ' bye' : ''}">
         <div class="player-name home">${hName}</div>
         <div class="result-badge result-${hResult}">${hResult !== 'empty' ? hResult : ''}</div>
         <input class="score-input" type="number" min="0" max="9999" placeholder="–"
-          value="${fix.homeScore !== null ? fix.homeScore : ''}" ${ro}
+          value="${fix.homeScore !== null ? fix.homeScore : ''}" ${scoreRo}
           oninput="updateScore(${ri},${fi},'home',this.value)">
         <div class="vs-label">vs</div>
         <input class="score-input" type="number" min="0" max="9999" placeholder="–"
-          value="${fix.awayScore !== null ? fix.awayScore : ''}" ${ro}
+          value="${fix.awayScore !== null ? fix.awayScore : ''}" ${scoreRo}
           oninput="updateScore(${ri},${fi},'away',this.value)">
         <div class="result-badge result-${aResult}">${aResult !== 'empty' ? aResult : ''}</div>
         <div class="player-name away">${aName}</div>
@@ -560,7 +831,6 @@ function updateScore(ri, fi, side, val) {
   if (side === 'home') state.rounds[ri][fi].homeScore = v;
   else state.rounds[ri][fi].awayScore = v;
 
-  // Update badges in-place
   const fix = state.rounds[ri][fi];
   const hResult = getResult(fix.homeScore, fix.awayScore, 'home');
   const aResult = getResult(fix.homeScore, fix.awayScore, 'away');
@@ -579,7 +849,11 @@ function updateScore(ri, fi, side, val) {
       count++;
     });
   });
+
+  saveToUrl();
 }
+
+// ── League Table ─────────────────────────────────────────────────────────────
 
 function calcTable() {
   const stats = {};
@@ -638,7 +912,79 @@ function renderTable() {
   }).join('');
 }
 
-updatePlayerInputs();
+// ── Tab switching ─────────────────────────────────────────────────────────────
+
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach((t, i) => {
+    t.classList.toggle('active', ['setup', 'fixtures', 'table'][i] === name);
+  });
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('panel-' + name).classList.add('active');
+  if (name === 'table') renderTable();
+}
+
+// ── Modals ────────────────────────────────────────────────────────────────────
+
+function openShareModal() {
+  document.getElementById('view-link-input').value = buildViewUrl();
+  document.getElementById('edit-link-input').value = buildEditUrl();
+  document.getElementById('share-modal').classList.add('open');
+}
+
+function openEditModal() {
+  document.getElementById('edit-code-input').value = '';
+  document.getElementById('unlock-error').classList.remove('visible');
+  document.getElementById('edit-modal').classList.add('open');
+  setTimeout(() => document.getElementById('edit-code-input').focus(), 50);
+}
+
+function closeModal(id) {
+  document.getElementById(id).classList.remove('open');
+}
+
+function overlayClose(event, id) {
+  if (event.target === document.getElementById(id)) closeModal(id);
+}
+
+function tryUnlock() {
+  const input = document.getElementById('edit-code-input').value.trim();
+  const params = parseHash();
+  if (!params.t) {
+    if (input.length > 0) {
+      isEditMode = true;
+      editToken = input;
+      history.replaceState(null, '', '#d=' + encodeState(state) + '&t=' + editToken);
+      closeModal('edit-modal');
+      updateHeader();
+      renderFixtures();
+    } else {
+      document.getElementById('unlock-error').textContent = 'Please enter an edit code.';
+      document.getElementById('unlock-error').classList.add('visible');
+    }
+  } else {
+    if (input === params.t) {
+      isEditMode = true;
+      editToken = params.t;
+      closeModal('edit-modal');
+      updateHeader();
+      renderFixtures();
+    } else {
+      document.getElementById('unlock-error').textContent = 'Incorrect edit code. Try again.';
+      document.getElementById('unlock-error').classList.add('visible');
+    }
+  }
+}
+
+function copyLink(inputId, btn) {
+  const val = document.getElementById(inputId).value;
+  navigator.clipboard.writeText(val).then(() => {
+    btn.textContent = 'Copied!';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
+  });
+}
+
+init();
 </script>
 </body>
 </html>
