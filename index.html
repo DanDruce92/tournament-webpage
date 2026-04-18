@@ -25,12 +25,14 @@
   const db  = getDatabase(app);
 
   // ── state ──────────────────────────────────────────────────────────────────
-  let state       = { name:'', players:[], rounds:[], knockout:null };
+  let state       = { name:'', players:[], rounds:[], knockout:null, type:'roundrobin' };
   let isEditMode  = false;
   let editToken   = null;
   let tourneyId   = null;
   let saveTimer   = null;
   let viewerUnsub = null;
+  let setupType   = 'roundrobin'; // selected on setup form
+  let setupKoSize = null;         // selected bracket size for knockout-only
 
   // ── helpers ────────────────────────────────────────────────────────────────
   function generateId() {
@@ -64,20 +66,25 @@
     state = {
       name:     data.name,
       players:  data.players,
-      rounds:   data.rounds,
-      knockout: data.knockout || null
+      rounds:   data.rounds   || [],
+      knockout: data.knockout || null,
+      type:     data.type     || 'roundrobin'
     };
     const stored = localStorage.getItem(tokenKey(tourneyId));
     if (stored && stored === data.token) { isEditMode = true; editToken = data.token; }
   }
 
   function applyUI() {
+    const isKoOnly = state.type === 'knockout';
+    document.getElementById('tab-fixtures').style.display = isKoOnly ? 'none' : '';
+    document.getElementById('tab-table').style.display    = isKoOnly ? 'none' : '';
     updateHeader();
     renderFixtures();
     renderTable();
     renderKnockout();
     renderOverview();
-    switchTab(isEditMode ? 'fixtures' : 'overview');
+    if (isKoOnly) switchTab('knockout');
+    else switchTab(isEditMode ? 'fixtures' : 'overview');
   }
 
   function startViewerListener() {
@@ -85,7 +92,7 @@
     viewerUnsub = onValue(ref(db, 'tournaments/' + tourneyId), snap => {
       if (!snap.exists()) return;
       const d = snap.val();
-      state = { name:d.name, players:d.players, rounds:d.rounds, knockout:d.knockout||null };
+      state = { name:d.name, players:d.players, rounds:d.rounds||[], knockout:d.knockout||null, type:d.type||'roundrobin' };
       renderFixtures();
       renderTable();
       renderKnockout();
@@ -227,22 +234,60 @@
     return rounds;
   }
 
+  window.setSetupType = function(type) {
+    setupType = type;
+    document.getElementById('type-btn-rr').classList.toggle('active', type==='roundrobin');
+    document.getElementById('type-btn-ko').classList.toggle('active', type==='knockout');
+    document.getElementById('ko-size-field').style.display = type==='knockout' ? 'block' : 'none';
+  };
+
+  window.setKoSize = function(size, el) {
+    setupKoSize = size;
+    document.querySelectorAll('#ko-size-options .ko-option-btn').forEach(b=>b.classList.remove('active'));
+    el.classList.add('active');
+  };
+
   window.generateTournament = async function() {
     const n      = parseInt(document.getElementById('playerCount').value);
     const inputs = document.querySelectorAll('#playerGrid input');
     const name   = document.getElementById('tournamentName').value.trim() || 'Tournament';
-    state = {
-      name,
-      players: [...inputs].map((inp,i)=>inp.value.trim()||`Player ${i+1}`),
-      rounds:  generateRoundRobin(n),
-      knockout: null
-    };
+    const players = [...inputs].map((inp,i)=>inp.value.trim()||`Player ${i+1}`);
+
+    if (setupType==='knockout') {
+      if (!setupKoSize) { alert('Please select a bracket size.'); return; }
+      // Seed by player list order
+      const mockStandings = players.map((_,i)=>({idx:i}));
+      const seedings = buildSeedings(setupKoSize, mockStandings);
+      const numRounds = Math.log2(setupKoSize);
+      const rounds = [];
+      const firstRound = [];
+      for (let i=0; i<setupKoSize/2; i++) {
+        const p1=seedings[i*2]??null, p2=seedings[i*2+1]??null;
+        firstRound.push({p1,p2,s1:null,s2:null,bye:p1===null||p2===null});
+      }
+      rounds.push(firstRound);
+      for (let r=1; r<numRounds; r++) {
+        rounds.push(Array.from({length:Math.pow(2,numRounds-r-1)},()=>({p1:null,p2:null,s1:null,s2:null,bye:false})));
+      }
+      firstRound.forEach((match,fi)=>{
+        if (!match.bye) return;
+        const winner=match.p1!==null?match.p1:match.p2;
+        if (winner===null||rounds.length<2) return;
+        const slot=fi%2===0?'p1':'p2';
+        rounds[1][Math.floor(fi/2)][slot]=winner;
+      });
+      state = { name, players, rounds:[], knockout:{bracketSize:setupKoSize,rounds}, type:'knockout' };
+    } else {
+      state = { name, players, rounds:generateRoundRobin(n), knockout:null, type:'roundrobin' };
+    }
+
     tourneyId = generateId();
     editToken = generateToken();
     localStorage.setItem(tokenKey(tourneyId), editToken);
     isEditMode = true;
     await set(ref(db,'tournaments/'+tourneyId), {
       name:state.name, players:state.players, rounds:state.rounds,
+      knockout:state.knockout||null, type:state.type,
       token:editToken, createdAt:Date.now()
     });
     history.replaceState(null,'','#id='+tourneyId);
@@ -363,7 +408,7 @@
   function renderKnockoutSetup() {
     const el=document.getElementById('knockout-setup');
     if (!el) return;
-    if (!isEditMode || !state.players.length || state.knockout) { el.style.display='none'; return; }
+    if (!isEditMode || !state.players.length || state.knockout || state.type==='knockout') { el.style.display='none'; return; }
     const n = state.players.length;
     // Offer bracket sizes from 2 up to next power-of-2 >= n, max 32
     const sizes=[];
@@ -559,8 +604,9 @@
     const pts = r => r.won*3 + r.drew;
     const diff = r => r.for - r.against;
 
-    // League table
-    let html = `<div class="ov-section">
+    // League table (round-robin only)
+    let html = '';
+    if (state.type!=='knockout') html += `<div class="ov-section">
       <div class="ov-heading">League Table</div>
       <div class="table-wrap"><table>
         <thead><tr>
@@ -581,7 +627,6 @@
       </table></div>
     </div>`;
 
-    // Knockout bracket
     if (state.knockout) {
       const {rounds} = state.knockout;
       const total = rounds.length;
@@ -744,8 +789,14 @@
   .panel{display:none;}
   .panel.active{display:block;}
 
-  .setup-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:32px;max-width:480px;}
+  .setup-layout{display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start;}
+  .setup-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:32px;}
   .setup-card h2{font-size:14px;font-weight:600;margin-bottom:24px;}
+  .type-toggle{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:0;}
+  .type-btn{padding:12px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;cursor:pointer;font-family:'Inter',sans-serif;font-size:13px;font-weight:500;color:var(--text-mid);text-align:left;transition:border-color 0.15s,background 0.15s,color 0.15s;width:100%;}
+  .type-btn span{display:block;font-size:11px;font-weight:400;color:var(--text-dim);margin-top:2px;}
+  .type-btn.active{background:var(--accent);border-color:var(--accent);color:#fff;}
+  .type-btn.active span{color:rgba(255,255,255,0.65);}
   .field{margin-bottom:20px;}
   label{display:block;font-size:12px;font-weight:500;color:var(--text-mid);margin-bottom:6px;letter-spacing:0.2px;}
 
@@ -816,6 +867,8 @@
   .ko-option-btn{padding:12px 20px;background:var(--bg);border:1px solid var(--border);border-radius:8px;cursor:pointer;font-family:'Inter',sans-serif;font-size:13px;font-weight:600;color:var(--text);transition:border-color 0.15s,background 0.15s;display:flex;flex-direction:column;align-items:center;gap:3px;min-width:110px;}
   .ko-option-btn span{font-size:11px;font-weight:400;color:var(--text-dim);}
   .ko-option-btn:hover{border-color:var(--accent);background:var(--surface);}
+  .ko-option-btn.active{border-color:var(--accent);background:var(--accent);color:#fff;}
+  .ko-option-btn.active span{color:rgba(255,255,255,0.65);}
 
   /* Champion banner */
   .champion-banner{background:linear-gradient(135deg,#fef3c7,#fde68a);border:1px solid #f59e0b;border-radius:8px;padding:16px 24px;text-align:center;font-size:15px;font-weight:600;color:#92400e;margin-top:8px;}
@@ -874,7 +927,7 @@
   .bm-divider{height:1px;background:var(--border);}
 
   @media(max-width:600px){
-    header{padding:16px;} .container{padding:20px 12px;} .setup-card{padding:20px;}
+    header{padding:16px;} .container{padding:20px 12px;} .setup-card{padding:20px;} .setup-layout{grid-template-columns:1fr;}
     .player-grid{grid-template-columns:1fr;}
     .fixture-row{grid-template-columns:1fr 36px 58px 24px 58px 36px 1fr;padding:8px 10px;gap:5px;}
     .player-name{font-size:13px;} th,td{padding:10px;}
@@ -905,45 +958,72 @@
   <div class="tabs">
     <button class="tab active" onclick="switchTab('setup')">Setup</button>
     <button class="tab" onclick="switchTab('overview')">Overview</button>
-    <button class="tab" onclick="switchTab('fixtures')">Fixtures</button>
-    <button class="tab" onclick="switchTab('table')">League Table</button>
+    <button class="tab" id="tab-fixtures" onclick="switchTab('fixtures')">Fixtures</button>
+    <button class="tab" id="tab-table" onclick="switchTab('table')">League Table</button>
     <button class="tab" id="tab-knockout" onclick="switchTab('knockout')" style="display:none">Knockout</button>
   </div>
 
   <!-- SETUP -->
   <div id="panel-setup" class="panel active">
-    <div class="how-to">
-      <div class="how-to-title">How it works</div>
-      <ol class="how-to-steps">
-        <li><strong>Create</strong> — Enter a tournament name, choose how many players, and fill in their names. Or download the CSV template, fill it in, and upload it.</li>
-        <li><strong>Share</strong> — After generating fixtures you'll get a link anyone can bookmark to follow scores live, plus a private Edit Code for whoever is entering results.</li>
-        <li><strong>Enter scores</strong> — Use the Fixtures tab to enter match results. The league table updates automatically. Download the scores sheet as CSV if you prefer to fill it in offline, then re-upload.</li>
-        <li><strong>Knockout</strong> — Once the league stage is done, go to League Table and click <em>Start Knockout Round</em> to seed players into a bracket. Winners advance automatically.</li>
-        <li><strong>Overview</strong> — The Overview tab shows the table and knockout bracket on one page — ideal for a display screen.</li>
-      </ol>
-    </div>
+    <div class="setup-layout">
 
-    <div class="setup-card">
-      <h2>New Tournament</h2>
-      <div class="field">
-        <label>Tournament Name</label>
-        <input type="text" id="tournamentName" placeholder="e.g. Friday Night League">
+      <!-- How it works -->
+      <div class="how-to">
+        <div class="how-to-title">How it works</div>
+        <ol class="how-to-steps">
+          <li><strong>Create</strong> — Enter a name, choose a format and player count, fill in names (or upload a CSV). Then click Generate.</li>
+          <li><strong>Share</strong> — You'll get a bookmark-friendly link for viewers and a private Edit Code for whoever enters scores.</li>
+          <li><strong>Enter scores</strong> — Use the Fixtures tab. The league table updates live. You can also download the scores as CSV, fill them in offline, and re-upload.</li>
+          <li><strong>Knockout</strong> — For Round Robin, go to League Table once done and click <em>Start Knockout Round</em> to seed into a bracket. For Knockout-only tournaments, the bracket is ready straight away.</li>
+          <li><strong>Overview</strong> — Shows the league table and bracket on one page, ideal for a display screen. Viewers land here by default.</li>
+        </ol>
       </div>
-      <div class="field">
-        <label>Number of Players</label>
-        <select id="playerCount" onchange="updatePlayerInputs()"></select>
-      </div>
-      <div class="field">
-        <label>Player Names</label>
-        <div class="player-grid" id="playerGrid"></div>
-        <div class="csv-row">
-          <button class="btn-csv" onclick="downloadPlayerTemplate()">↓ Download CSV Template</button>
-          <label class="btn-csv">↑ Upload CSV
-            <input type="file" accept=".csv,.txt" style="display:none" onchange="uploadPlayerCsv(this.files[0]);this.value=''">
-          </label>
+
+      <!-- Setup form -->
+      <div class="setup-card">
+        <h2>New Tournament</h2>
+        <div class="field">
+          <label>Tournament Name</label>
+          <input type="text" id="tournamentName" placeholder="e.g. Friday Night League">
         </div>
+        <div class="field">
+          <label>Format</label>
+          <div class="type-toggle">
+            <button class="type-btn active" id="type-btn-rr" onclick="setSetupType('roundrobin')">
+              Round Robin <span>Everyone plays everyone</span>
+            </button>
+            <button class="type-btn" id="type-btn-ko" onclick="setSetupType('knockout')">
+              Knockout Only <span>Straight bracket from the start</span>
+            </button>
+          </div>
+        </div>
+        <div class="field" id="ko-size-field" style="display:none">
+          <label>Bracket Size</label>
+          <div class="ko-options" id="ko-size-options">
+            <button class="ko-option-btn" onclick="setKoSize(2,this)">Last 2<span>Final only</span></button>
+            <button class="ko-option-btn" onclick="setKoSize(4,this)">Last 4<span>Semis + Final</span></button>
+            <button class="ko-option-btn" onclick="setKoSize(8,this)">Last 8<span>QF → Final</span></button>
+            <button class="ko-option-btn" onclick="setKoSize(16,this)">Last 16<span>R16 → Final</span></button>
+            <button class="ko-option-btn" onclick="setKoSize(32,this)">Last 32<span>R32 → Final</span></button>
+          </div>
+        </div>
+        <div class="field">
+          <label>Number of Players</label>
+          <select id="playerCount" onchange="updatePlayerInputs()"></select>
+        </div>
+        <div class="field">
+          <label>Player Names</label>
+          <div class="player-grid" id="playerGrid"></div>
+          <div class="csv-row">
+            <button class="btn-csv" onclick="downloadPlayerTemplate()">↓ Download CSV Template</button>
+            <label class="btn-csv">↑ Upload CSV
+              <input type="file" accept=".csv,.txt" style="display:none" onchange="uploadPlayerCsv(this.files[0]);this.value=''">
+            </label>
+          </div>
+        </div>
+        <button class="btn" onclick="generateTournament()">Generate &amp; Get Share Link</button>
       </div>
-      <button class="btn" onclick="generateTournament()">Generate Fixtures &amp; Get Share Link</button>
+
     </div>
   </div>
 
