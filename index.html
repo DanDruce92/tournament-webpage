@@ -25,7 +25,7 @@
   const db  = getDatabase(app);
 
   // ── state ──────────────────────────────────────────────────────────────────
-  let state       = { name: '', players: [], rounds: [] };
+  let state       = { name:'', players:[], rounds:[], knockout:null };
   let isEditMode  = false;
   let editToken   = null;
   let tourneyId   = null;
@@ -35,37 +35,23 @@
   // ── helpers ────────────────────────────────────────────────────────────────
   function generateId() {
     const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-    return [...crypto.getRandomValues(new Uint8Array(6))]
-      .map(b => chars[b % 36]).join('');
+    return [...crypto.getRandomValues(new Uint8Array(6))].map(b => chars[b%36]).join('');
   }
   function generateToken() {
-    return [...crypto.getRandomValues(new Uint8Array(16))]
-      .map(b => b.toString(16).padStart(2,'0')).join('');
+    return [...crypto.getRandomValues(new Uint8Array(16))].map(b=>b.toString(16).padStart(2,'0')).join('');
   }
   function tokenKey(id) { return 'edit_' + id; }
 
   // ── init ───────────────────────────────────────────────────────────────────
   async function init() {
-    const hash = location.hash.slice(1);
-    const id   = new URLSearchParams(hash).get('id');
-
+    const id = new URLSearchParams(location.hash.slice(1)).get('id');
     if (id) {
       showLoading(true);
       const snap = await get(ref(db, 'tournaments/' + id));
       showLoading(false);
-
       if (!snap.exists()) { showNotFound(); return; }
-
       tourneyId = id;
-      const data = snap.val();
-      state = { name: data.name, players: data.players, rounds: data.rounds };
-
-      const stored = localStorage.getItem(tokenKey(id));
-      if (stored && stored === data.token) {
-        isEditMode = true;
-        editToken  = data.token;
-      }
-
+      loadStateFromData(snap.val());
       applyUI();
       if (!isEditMode) startViewerListener();
     } else {
@@ -73,10 +59,22 @@
     }
   }
 
+  function loadStateFromData(data) {
+    state = {
+      name:     data.name,
+      players:  data.players,
+      rounds:   data.rounds,
+      knockout: data.knockout || null
+    };
+    const stored = localStorage.getItem(tokenKey(tourneyId));
+    if (stored && stored === data.token) { isEditMode = true; editToken = data.token; }
+  }
+
   function applyUI() {
     updateHeader();
     renderFixtures();
     renderTable();
+    renderKnockout();
     switchTab('fixtures');
   }
 
@@ -85,27 +83,26 @@
     viewerUnsub = onValue(ref(db, 'tournaments/' + tourneyId), snap => {
       if (!snap.exists()) return;
       const d = snap.val();
-      state = { name: d.name, players: d.players, rounds: d.rounds };
+      state = { name:d.name, players:d.players, rounds:d.rounds, knockout:d.knockout||null };
       renderFixtures();
       renderTable();
+      renderKnockout();
     });
   }
 
-  // ── Firebase write (debounced) ─────────────────────────────────────────────
-  function scheduleSave() {
+  // ── Firebase write ─────────────────────────────────────────────────────────
+  function scheduleSave(fields) {
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => {
-      update(ref(db, 'tournaments/' + tourneyId), { rounds: state.rounds });
-    }, 400);
+    saveTimer = setTimeout(() => update(ref(db,'tournaments/'+tourneyId), fields), 400);
   }
 
   // ── Setup ──────────────────────────────────────────────────────────────────
   window.updatePlayerInputs = function() {
-    const n    = parseInt(document.getElementById('playerCount').value);
+    const n = parseInt(document.getElementById('playerCount').value);
     const grid = document.getElementById('playerGrid');
-    const existing = [...grid.querySelectorAll('input')].map(i => i.value);
+    const existing = [...grid.querySelectorAll('input')].map(i=>i.value);
     grid.innerHTML = '';
-    for (let i = 0; i < n; i++) {
+    for (let i=0; i<n; i++) {
       const div = document.createElement('div');
       div.className = 'player-input';
       div.innerHTML = `<span class="player-num">${i+1}</span>
@@ -116,16 +113,16 @@
 
   function generateRoundRobin(n) {
     const players = [...Array(n).keys()];
-    if (n % 2 !== 0) players.push(n);
-    const total = players.length, rounds = [];
-    const fixed = players[0], rotating = players.slice(1);
-    for (let r = 0; r < total - 1; r++) {
-      const round = [], circle = [fixed, ...rotating];
-      for (let m = 0; m < total / 2; m++) {
-        const home = circle[m], away = circle[total-1-m];
+    if (n%2!==0) players.push(n);
+    const total=players.length, rounds=[];
+    const fixed=players[0], rotating=players.slice(1);
+    for (let r=0; r<total-1; r++) {
+      const round=[], circle=[fixed,...rotating];
+      for (let m=0; m<total/2; m++) {
+        const home=circle[m], away=circle[total-1-m];
         round.push(r%2===0
-          ? {home, away, homeScore:null, awayScore:null}
-          : {home:away, away:home, homeScore:null, awayScore:null});
+          ? {home,away,homeScore:null,awayScore:null}
+          : {home:away,away:home,homeScore:null,awayScore:null});
       }
       rounds.push(round);
       rotating.push(rotating.shift());
@@ -137,55 +134,44 @@
     const n      = parseInt(document.getElementById('playerCount').value);
     const inputs = document.querySelectorAll('#playerGrid input');
     const name   = document.getElementById('tournamentName').value.trim() || 'Tournament';
-
     state = {
       name,
-      players: [...inputs].map((inp,i) => inp.value.trim() || `Player ${i+1}`),
-      rounds:  generateRoundRobin(n)
+      players: [...inputs].map((inp,i)=>inp.value.trim()||`Player ${i+1}`),
+      rounds:  generateRoundRobin(n),
+      knockout: null
     };
-
     tourneyId = generateId();
     editToken = generateToken();
     localStorage.setItem(tokenKey(tourneyId), editToken);
     isEditMode = true;
-
-    await set(ref(db, 'tournaments/' + tourneyId), {
-      name:      state.name,
-      players:   state.players,
-      rounds:    state.rounds,
-      token:     editToken,
-      createdAt: Date.now()
+    await set(ref(db,'tournaments/'+tourneyId), {
+      name:state.name, players:state.players, rounds:state.rounds,
+      token:editToken, createdAt:Date.now()
     });
-
-    history.replaceState(null, '', '#id=' + tourneyId);
+    history.replaceState(null,'','#id='+tourneyId);
     document.title = state.name + ' · Tournament Manager';
-
     applyUI();
     openShareModal();
   };
 
-  // ── Fixtures ───────────────────────────────────────────────────────────────
-  function playerName(idx) {
-    return idx >= state.players.length ? 'BYE' : state.players[idx];
-  }
+  // ── Round-robin fixtures ───────────────────────────────────────────────────
+  function playerName(idx) { return idx>=state.players.length ? 'BYE' : state.players[idx]; }
 
   function renderFixtures() {
     const cont = document.getElementById('fixtures-content');
     if (!state.rounds.length) {
-      cont.innerHTML = `<div class="empty-state">
-        <span class="empty-icon">◫</span>No fixtures yet
+      cont.innerHTML = `<div class="empty-state"><span class="empty-icon">◫</span>No fixtures yet
         <p>Set up your tournament to generate the schedule</p></div>`;
       return;
     }
-
-    let html = '';
-    state.rounds.forEach((round, ri) => {
+    let html='';
+    state.rounds.forEach((round,ri) => {
       html += `<div class="round-block"><div class="round-label">Round ${ri+1}</div>`;
-      round.forEach((fix, fi) => {
-        const isBye = fix.home >= state.players.length || fix.away >= state.players.length;
-        const hR = getResult(fix.homeScore, fix.awayScore, 'home');
-        const aR = getResult(fix.homeScore, fix.awayScore, 'away');
-        const ro = (isBye || !isEditMode) ? 'readonly' : '';
+      round.forEach((fix,fi) => {
+        const isBye = fix.home>=state.players.length || fix.away>=state.players.length;
+        const hR=getResult(fix.homeScore,fix.awayScore,'home');
+        const aR=getResult(fix.homeScore,fix.awayScore,'away');
+        const ro=(isBye||!isEditMode)?'readonly':'';
         html += `<div class="fixture-row${isBye?' bye':''}">
           <div class="player-name home">${playerName(fix.home)}</div>
           <div class="result-badge result-${hR}">${hR!=='empty'?hR:''}</div>
@@ -205,165 +191,306 @@
     cont.innerHTML = html;
   }
 
-  function getResult(hs, as, side) {
+  function getResult(hs,as,side) {
     if (hs===null||as===null||hs===''||as==='') return 'empty';
-    const h=parseInt(hs), a=parseInt(as);
+    const h=parseInt(hs),a=parseInt(as);
     if (isNaN(h)||isNaN(a)) return 'empty';
     if (h===a) return 'D';
     if (side==='home') return h>a?'W':'L';
     return a>h?'W':'L';
   }
 
-  window.updateScore = function(ri, fi, side, val) {
-    const v = val==='' ? null : parseInt(val);
-    if (side==='home') state.rounds[ri][fi].homeScore = v;
-    else               state.rounds[ri][fi].awayScore = v;
-
-    const fix = state.rounds[ri][fi];
-    const hR  = getResult(fix.homeScore, fix.awayScore, 'home');
-    const aR  = getResult(fix.homeScore, fix.awayScore, 'away');
-
-    let count = 0;
-    const rows = document.querySelectorAll('.fixture-row');
-    state.rounds.forEach((round, r) => {
-      round.forEach((f, fp) => {
-        if (r===ri && fp===fi && rows[count]) {
-          const badges = rows[count].querySelectorAll('.result-badge');
-          badges[0].className = `result-badge result-${hR}`;
-          badges[0].textContent = hR!=='empty'?hR:'';
-          badges[1].className = `result-badge result-${aR}`;
-          badges[1].textContent = aR!=='empty'?aR:'';
-        }
-        count++;
-      });
-    });
-
-    scheduleSave();
+  window.updateScore = function(ri,fi,side,val) {
+    const v=val===''?null:parseInt(val);
+    if (side==='home') state.rounds[ri][fi].homeScore=v;
+    else               state.rounds[ri][fi].awayScore=v;
+    const fix=state.rounds[ri][fi];
+    const hR=getResult(fix.homeScore,fix.awayScore,'home');
+    const aR=getResult(fix.homeScore,fix.awayScore,'away');
+    let count=0;
+    const rows=document.querySelectorAll('#fixtures-content .fixture-row');
+    state.rounds.forEach((round,r) => round.forEach((f,fp) => {
+      if (r===ri&&fp===fi&&rows[count]) {
+        const b=rows[count].querySelectorAll('.result-badge');
+        b[0].className=`result-badge result-${hR}`; b[0].textContent=hR!=='empty'?hR:'';
+        b[1].className=`result-badge result-${aR}`; b[1].textContent=aR!=='empty'?aR:'';
+      }
+      count++;
+    }));
+    scheduleSave({rounds:state.rounds});
   };
 
-  // ── League Table ───────────────────────────────────────────────────────────
+  // ── League table ───────────────────────────────────────────────────────────
   function calcTable() {
-    const stats = {};
-    state.players.forEach((p,i) => {
-      stats[i] = {name:p, played:0, won:0, drew:0, lost:0, for:0, against:0};
-    });
-    state.rounds.forEach(round => {
-      round.forEach(fix => {
-        if (fix.home>=state.players.length||fix.away>=state.players.length) return;
-        if (fix.homeScore===null||fix.awayScore===null) return;
-        const h=parseInt(fix.homeScore), a=parseInt(fix.awayScore);
-        if (isNaN(h)||isNaN(a)) return;
-        stats[fix.home].played++; stats[fix.away].played++;
-        stats[fix.home].for+=h;  stats[fix.home].against+=a;
-        stats[fix.away].for+=a;  stats[fix.away].against+=h;
-        if (h>a)      { stats[fix.home].won++;  stats[fix.away].lost++; }
-        else if (a>h) { stats[fix.away].won++;  stats[fix.home].lost++; }
-        else          { stats[fix.home].drew++; stats[fix.away].drew++; }
-      });
-    });
+    const stats={};
+    state.players.forEach((p,i)=>{ stats[i]={idx:i,name:p,played:0,won:0,drew:0,lost:0,for:0,against:0}; });
+    state.rounds.forEach(round => round.forEach(fix => {
+      if (fix.home>=state.players.length||fix.away>=state.players.length) return;
+      if (fix.homeScore===null||fix.awayScore===null) return;
+      const h=parseInt(fix.homeScore),a=parseInt(fix.awayScore);
+      if (isNaN(h)||isNaN(a)) return;
+      stats[fix.home].played++; stats[fix.away].played++;
+      stats[fix.home].for+=h;  stats[fix.home].against+=a;
+      stats[fix.away].for+=a;  stats[fix.away].against+=h;
+      if (h>a)      { stats[fix.home].won++;  stats[fix.away].lost++; }
+      else if (a>h) { stats[fix.away].won++;  stats[fix.home].lost++; }
+      else          { stats[fix.home].drew++; stats[fix.away].drew++; }
+    }));
     return Object.values(stats).sort((a,b)=>{
-      const ap=a.won*3+a.drew, bp=b.won*3+b.drew;
-      return bp!==ap ? bp-ap : (b.for-b.against)-(a.for-a.against);
+      const ap=a.won*3+a.drew,bp=b.won*3+b.drew;
+      return bp!==ap?bp-ap:(b.for-b.against)-(a.for-a.against);
     });
   }
 
   function renderTable() {
-    const tbody = document.getElementById('table-body');
+    const tbody=document.getElementById('table-body');
     if (!state.players.length) return;
-    tbody.innerHTML = calcTable().map((r,i) => {
-      const rank=i+1, diff=r.for-r.against, pts=r.won*3+r.drew;
-      const dc = diff>0?'stat-pos':diff<0?'stat-neg':'stat-zero';
-      const ds = r.played>0?(diff>0?`+${diff}`:`${diff}`):'—';
+    tbody.innerHTML=calcTable().map((r,i)=>{
+      const rank=i+1,diff=r.for-r.against,pts=r.won*3+r.drew;
+      const dc=diff>0?'stat-pos':diff<0?'stat-neg':'stat-zero';
+      const ds=r.played>0?(diff>0?`+${diff}`:`${diff}`):'—';
       return `<tr class="${rank<=3?'rank-'+rank:''}">
-        <td><span class="rank-num">${rank}</span></td>
-        <td>${r.name}</td>
+        <td><span class="rank-num">${rank}</span></td><td>${r.name}</td>
         <td>${r.played}</td><td>${r.won}</td><td>${r.drew}</td><td>${r.lost}</td>
         <td>${r.for}</td><td>${r.against}</td>
-        <td class="${dc}">${ds}</td>
-        <td class="stat-pts">${pts}</td>
+        <td class="${dc}">${ds}</td><td class="stat-pts">${pts}</td>
       </tr>`;
     }).join('');
+    renderKnockoutSetup();
+  }
+
+  // ── Knockout setup UI (shown below league table) ───────────────────────────
+  function renderKnockoutSetup() {
+    const el=document.getElementById('knockout-setup');
+    if (!el) return;
+    if (!isEditMode || !state.players.length || state.knockout) { el.style.display='none'; return; }
+    const maxAdvancing = Math.min(state.players.length, 8);
+    const options = [2,4,8].filter(n=>n<=maxAdvancing);
+    el.style.display='block';
+    el.innerHTML=`
+      <div class="ko-setup-divider"></div>
+      <div class="ko-setup-card">
+        <div class="ko-setup-title">Start Knockout Round</div>
+        <div class="ko-setup-desc">Choose how many top players advance from the league table into a knockout bracket.</div>
+        <div class="ko-options">
+          ${options.map(n=>`<button class="ko-option-btn" onclick="startKnockout(${n})">
+            Top ${n}<span>${n===2?'Final only':n===4?'Semis + Final':'QF + Semis + Final'}</span>
+          </button>`).join('')}
+        </div>
+      </div>`;
+  }
+
+  // ── Knockout generation ────────────────────────────────────────────────────
+  // Standard seedings ensure #1 and #2 can only meet in the final
+  const SEEDS = { 2:[0,1], 4:[0,3,1,2], 8:[0,7,3,4,1,6,2,5] };
+
+  window.startKnockout = function(advancing) {
+    const standings = calcTable();
+    const seedings  = SEEDS[advancing];
+    const numRounds = Math.log2(advancing);
+    const rounds    = [];
+
+    // First round — seed the players
+    const firstRound=[];
+    for (let i=0; i<advancing/2; i++) {
+      const s1=seedings[i*2], s2=seedings[i*2+1];
+      firstRound.push({
+        p1: standings[s1]?.idx ?? null,
+        p2: standings[s2]?.idx ?? null,
+        s1:null, s2:null
+      });
+    }
+    rounds.push(firstRound);
+
+    // Subsequent rounds — TBD slots
+    for (let r=1; r<numRounds; r++) {
+      const round=[];
+      for (let m=0; m<Math.pow(2, numRounds-r-1); m++) {
+        round.push({p1:null,p2:null,s1:null,s2:null});
+      }
+      rounds.push(round);
+    }
+
+    state.knockout = { advancing, rounds };
+    scheduleSave({knockout:state.knockout});
+    renderKnockout();
+    renderKnockoutSetup();
+    switchTab('knockout');
+  };
+
+  // ── Knockout rendering ─────────────────────────────────────────────────────
+  function knockoutRoundName(ri, total) {
+    const fromEnd = total-1-ri;
+    if (fromEnd===0) return 'Final';
+    if (fromEnd===1) return 'Semi-finals';
+    if (fromEnd===2) return 'Quarter-finals';
+    return 'Round of '+Math.pow(2,fromEnd+1);
+  }
+
+  function renderKnockout() {
+    const cont=document.getElementById('knockout-content');
+    const tab =document.getElementById('tab-knockout');
+    if (!state.knockout) {
+      cont.innerHTML=`<div class="empty-state"><span class="empty-icon">⚡</span>No knockout stage yet
+        <p>${isEditMode?'Complete the league stage then start a knockout from the League Table tab.':'The organiser has not started a knockout stage yet.'}</p></div>`;
+      tab.style.display='none';
+      return;
+    }
+    tab.style.display='';
+    const {rounds}=state.knockout;
+    const total=rounds.length;
+    let html='';
+    rounds.forEach((round,ri)=>{
+      html+=`<div class="round-block"><div class="round-label">${knockoutRoundName(ri,total)}</div>`;
+      round.forEach((match,fi)=>{
+        const n1 = match.p1!==null ? state.players[match.p1] : '<span class="tbd">TBD</span>';
+        const n2 = match.p2!==null ? state.players[match.p2] : '<span class="tbd">TBD</span>';
+        const canEdit = isEditMode && match.p1!==null && match.p2!==null;
+        const ro = canEdit?'':'readonly';
+        const hR=getKoResult(match.s1,match.s2,'p1');
+        const aR=getKoResult(match.s1,match.s2,'p2');
+        html+=`<div class="fixture-row${match.p1===null&&match.p2===null?' tbd-row':''}">
+          <div class="player-name home">${n1}</div>
+          <div class="result-badge result-${hR}">${hR!=='empty'?hR:''}</div>
+          <input class="score-input" type="number" min="0" max="9999" placeholder="–"
+            value="${match.s1!==null?match.s1:''}" ${ro}
+            oninput="updateKoScore(${ri},${fi},'s1',this.value)">
+          <div class="vs-label">vs</div>
+          <input class="score-input" type="number" min="0" max="9999" placeholder="–"
+            value="${match.s2!==null?match.s2:''}" ${ro}
+            oninput="updateKoScore(${ri},${fi},'s2',this.value)">
+          <div class="result-badge result-${aR}">${aR!=='empty'?aR:''}</div>
+          <div class="player-name away">${n2}</div>
+        </div>`;
+      });
+      html+='</div>';
+    });
+
+    // Champion banner
+    const final=rounds[total-1][0];
+    if (final.s1!==null&&final.s2!==null&&final.s1!==final.s2) {
+      const winnerIdx = parseInt(final.s1)>parseInt(final.s2) ? final.p1 : final.p2;
+      if (winnerIdx!==null) {
+        html+=`<div class="champion-banner">🏆 ${state.players[winnerIdx]} wins the tournament!</div>`;
+      }
+    }
+
+    cont.innerHTML=html;
+  }
+
+  function getKoResult(s1,s2,side) {
+    if (s1===null||s2===null||s1===''||s2==='') return 'empty';
+    const a=parseInt(s1),b=parseInt(s2);
+    if (isNaN(a)||isNaN(b)) return 'empty';
+    if (a===b) return 'D';
+    if (side==='p1') return a>b?'W':'L';
+    return b>a?'W':'L';
+  }
+
+  window.updateKoScore = function(ri,fi,side,val) {
+    const v=val===''?null:parseInt(val);
+    state.knockout.rounds[ri][fi][side]=v;
+
+    // Advance winner to next round if both scores entered and no draw
+    const match=state.knockout.rounds[ri][fi];
+    if (match.s1!==null&&match.s2!==null&&match.s1!==match.s2) {
+      const nextRi=ri+1;
+      if (nextRi<state.knockout.rounds.length) {
+        const nextFi=Math.floor(fi/2);
+        const slot=fi%2===0?'p1':'p2';
+        const winner=parseInt(match.s1)>parseInt(match.s2)?match.p1:match.p2;
+        state.knockout.rounds[nextRi][nextFi][slot]=winner;
+      }
+    } else if (match.s1===null||match.s2===null||(match.s1===match.s2)) {
+      // Clear downstream if score is wiped or drawn
+      clearDownstream(ri,fi);
+    }
+
+    scheduleSave({knockout:state.knockout});
+    renderKnockout();
+  };
+
+  function clearDownstream(ri,fi) {
+    if (ri+1>=state.knockout.rounds.length) return;
+    const nextFi=Math.floor(fi/2);
+    const slot=fi%2===0?'p1':'p2';
+    state.knockout.rounds[ri+1][nextFi][slot]=null;
+    state.knockout.rounds[ri+1][nextFi].s1=null;
+    state.knockout.rounds[ri+1][nextFi].s2=null;
+    clearDownstream(ri+1,nextFi);
   }
 
   // ── Tabs ───────────────────────────────────────────────────────────────────
   window.switchTab = function(name) {
-    document.querySelectorAll('.tab').forEach((t,i) =>
-      t.classList.toggle('active', ['setup','fixtures','table'][i]===name));
-    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    const names=['setup','fixtures','table','knockout'];
+    document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',names[i]===name));
+    document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
     document.getElementById('panel-'+name).classList.add('active');
     if (name==='table') renderTable();
+    if (name==='knockout') renderKnockout();
   };
 
   // ── Header ─────────────────────────────────────────────────────────────────
   function updateHeader() {
-    document.getElementById('tournament-title').textContent = state.name||'Tournament Manager';
-    document.getElementById('header-subtitle').textContent  =
-      state.players.length ? `${state.players.length} players · Round-robin` : 'Round-robin fixture generator & league table';
-    const actions = document.getElementById('header-actions');
-    const badge   = document.getElementById('mode-badge');
-    const unlock  = document.getElementById('btn-unlock');
+    document.getElementById('tournament-title').textContent=state.name||'Tournament Manager';
+    document.getElementById('header-subtitle').textContent=state.players.length
+      ?`${state.players.length} players · Round-robin`:'Round-robin fixture generator & league table';
+    const actions=document.getElementById('header-actions');
+    const badge=document.getElementById('mode-badge');
+    const unlock=document.getElementById('btn-unlock');
     if (state.players.length) {
-      actions.style.display = 'flex';
-      badge.textContent  = isEditMode ? 'Editing' : 'View Only';
-      badge.className    = 'mode-badge ' + (isEditMode ? 'edit' : 'view');
-      unlock.style.display = isEditMode ? 'none' : '';
-    } else {
-      actions.style.display = 'none';
-    }
+      actions.style.display='flex';
+      badge.textContent=isEditMode?'Editing':'View Only';
+      badge.className='mode-badge '+(isEditMode?'edit':'view');
+      unlock.style.display=isEditMode?'none':'';
+    } else { actions.style.display='none'; }
   }
 
-  // ── Loading / error states ─────────────────────────────────────────────────
-  function showLoading(on) {
-    document.getElementById('loading-overlay').style.display = on ? 'flex' : 'none';
-  }
+  function showLoading(on) { document.getElementById('loading-overlay').style.display=on?'flex':'none'; }
   function showNotFound() {
-    document.getElementById('panel-setup').innerHTML =
-      `<div class="empty-state"><span class="empty-icon">⚠</span>
-       Tournament not found<p>This link may be invalid or the tournament was deleted.</p></div>`;
+    document.getElementById('panel-setup').innerHTML=
+      `<div class="empty-state"><span class="empty-icon">⚠</span>Tournament not found
+       <p>This link may be invalid or the tournament was deleted.</p></div>`;
   }
 
   // ── Share modal ────────────────────────────────────────────────────────────
   window.openShareModal = function() {
-    const url = location.href.split('#')[0] + '#id=' + tourneyId;
-    document.getElementById('share-link-input').value = url;
-    document.getElementById('edit-code-display').value = editToken || '';
+    document.getElementById('share-link-input').value=location.href.split('#')[0]+'#id='+tourneyId;
+    document.getElementById('edit-code-display').value=editToken||'';
     document.getElementById('share-modal').classList.add('open');
   };
 
   // ── Unlock modal ───────────────────────────────────────────────────────────
   window.openEditModal = function() {
-    document.getElementById('edit-code-input').value = '';
+    document.getElementById('edit-code-input').value='';
     document.getElementById('unlock-error').classList.remove('visible');
     document.getElementById('edit-modal').classList.add('open');
-    setTimeout(() => document.getElementById('edit-code-input').focus(), 50);
+    setTimeout(()=>document.getElementById('edit-code-input').focus(),50);
   };
 
   window.tryUnlock = async function() {
-    const input = document.getElementById('edit-code-input').value.trim();
-    const errEl = document.getElementById('unlock-error');
+    const input=document.getElementById('edit-code-input').value.trim();
+    const errEl=document.getElementById('unlock-error');
     if (!input) { errEl.textContent='Please enter an edit code.'; errEl.classList.add('visible'); return; }
-    const snap = await get(ref(db, 'tournaments/'+tourneyId+'/token'));
-    if (snap.exists() && snap.val()===input) {
-      isEditMode = true;
-      editToken  = input;
-      localStorage.setItem(tokenKey(tourneyId), input);
+    const snap=await get(ref(db,'tournaments/'+tourneyId+'/token'));
+    if (snap.exists()&&snap.val()===input) {
+      isEditMode=true; editToken=input;
+      localStorage.setItem(tokenKey(tourneyId),input);
       if (viewerUnsub) { viewerUnsub(); viewerUnsub=null; }
       closeModal('edit-modal');
-      updateHeader();
-      renderFixtures();
+      updateHeader(); renderFixtures(); renderTable(); renderKnockout();
     } else {
-      errEl.textContent = 'Incorrect edit code. Try again.';
+      errEl.textContent='Incorrect edit code. Try again.';
       errEl.classList.add('visible');
     }
   };
 
-  // ── Modal helpers (exposed globally) ──────────────────────────────────────
-  window.closeModal     = id => document.getElementById(id).classList.remove('open');
-  window.overlayClose   = (e,id) => { if(e.target===document.getElementById(id)) window.closeModal(id); };
-  window.copyLink       = function(inputId, btn) {
+  window.closeModal   = id=>document.getElementById(id).classList.remove('open');
+  window.overlayClose = (e,id)=>{ if(e.target===document.getElementById(id)) window.closeModal(id); };
+  window.copyLink     = function(inputId,btn) {
     navigator.clipboard.writeText(document.getElementById(inputId).value).then(()=>{
       btn.textContent='Copied!'; btn.classList.add('copied');
-      setTimeout(()=>{ btn.textContent='Copy'; btn.classList.remove('copied'); }, 2000);
+      setTimeout(()=>{ btn.textContent='Copy'; btn.classList.remove('copied'); },2000);
     });
   };
 
@@ -372,132 +499,144 @@
 
 <style>
   :root {
-    --bg: #f7f7f5; --surface: #ffffff; --border: #e4e4e0; --border-strong: #c8c8c2;
-    --text: #1a1a18; --text-mid: #6b6b65; --text-dim: #a8a8a2;
-    --accent: #1a1a18; --accent-hover: #383836;
-    --win-bg: #f0f7f2; --win-text: #287a45;
-    --loss-bg: #fdf0f0; --loss-text: #b83232;
-    --draw-bg: #f5f5f0; --draw-text: #6b6b40;
+    --bg:#f7f7f5; --surface:#ffffff; --border:#e4e4e0; --border-strong:#c8c8c2;
+    --text:#1a1a18; --text-mid:#6b6b65; --text-dim:#a8a8a2;
+    --accent:#1a1a18; --accent-hover:#383836;
+    --win-bg:#f0f7f2; --win-text:#287a45;
+    --loss-bg:#fdf0f0; --loss-text:#b83232;
+    --draw-bg:#f5f5f0; --draw-text:#6b6b40;
+    --gold:#b8860b;
   }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background:var(--bg); color:var(--text); font-family:'Inter',sans-serif; font-size:14px; line-height:1.5; min-height:100vh; }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;font-size:14px;line-height:1.5;min-height:100vh;}
 
-  /* Loading overlay */
-  #loading-overlay {
-    display:none; position:fixed; inset:0; background:var(--bg);
-    align-items:center; justify-content:center; z-index:200;
-    font-size:13px; color:var(--text-dim);
-  }
+  #loading-overlay{display:none;position:fixed;inset:0;background:var(--bg);align-items:center;justify-content:center;z-index:200;font-size:13px;color:var(--text-dim);}
 
-  header { background:var(--surface); border-bottom:1px solid var(--border); padding:20px 32px; }
-  .header-inner { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; }
-  h1 { font-size:20px; font-weight:600; letter-spacing:-0.3px; }
-  .subtitle { font-size:13px; color:var(--text-dim); margin-top:2px; }
-  .header-actions { display:flex; align-items:center; gap:10px; flex-shrink:0; }
+  header{background:var(--surface);border-bottom:1px solid var(--border);padding:20px 32px;}
+  .header-inner{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;}
+  h1{font-size:20px;font-weight:600;letter-spacing:-0.3px;}
+  .subtitle{font-size:13px;color:var(--text-dim);margin-top:2px;}
+  .header-actions{display:flex;align-items:center;gap:10px;flex-shrink:0;}
 
-  .mode-badge { font-size:11px; font-weight:600; padding:4px 10px; border-radius:20px; letter-spacing:0.3px; }
-  .mode-badge.view { background:#fef3c7; color:#92680a; }
-  .mode-badge.edit { background:var(--win-bg); color:var(--win-text); }
+  .mode-badge{font-size:11px;font-weight:600;padding:4px 10px;border-radius:20px;letter-spacing:0.3px;}
+  .mode-badge.view{background:#fef3c7;color:#92680a;}
+  .mode-badge.edit{background:var(--win-bg);color:var(--win-text);}
 
-  .btn-secondary { padding:7px 14px; background:transparent; border:1px solid var(--border-strong); border-radius:6px; color:var(--text); font-family:'Inter',sans-serif; font-size:12px; font-weight:500; cursor:pointer; transition:background 0.15s; }
-  .btn-secondary:hover { background:var(--bg); border-color:var(--accent); }
+  .btn-secondary{padding:7px 14px;background:transparent;border:1px solid var(--border-strong);border-radius:6px;color:var(--text);font-family:'Inter',sans-serif;font-size:12px;font-weight:500;cursor:pointer;transition:background 0.15s;}
+  .btn-secondary:hover{background:var(--bg);border-color:var(--accent);}
 
-  .container { max-width:900px; margin:0 auto; padding:32px 24px; }
+  .container{max-width:900px;margin:0 auto;padding:32px 24px;}
 
-  .tabs { display:flex; border-bottom:1px solid var(--border); margin-bottom:32px; }
-  .tab { padding:10px 20px; cursor:pointer; font-family:'Inter',sans-serif; font-size:13px; font-weight:500; color:var(--text-dim); border:none; border-bottom:2px solid transparent; background:none; transition:color 0.15s,border-color 0.15s; margin-bottom:-1px; }
-  .tab:hover { color:var(--text); }
-  .tab.active { color:var(--text); border-bottom-color:var(--text); }
+  .tabs{display:flex;border-bottom:1px solid var(--border);margin-bottom:32px;}
+  .tab{padding:10px 20px;cursor:pointer;font-family:'Inter',sans-serif;font-size:13px;font-weight:500;color:var(--text-dim);border:none;border-bottom:2px solid transparent;background:none;transition:color 0.15s,border-color 0.15s;margin-bottom:-1px;}
+  .tab:hover{color:var(--text);}
+  .tab.active{color:var(--text);border-bottom-color:var(--text);}
 
-  .panel { display:none; }
-  .panel.active { display:block; }
+  .panel{display:none;}
+  .panel.active{display:block;}
 
-  .setup-card { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:32px; max-width:480px; }
-  .setup-card h2 { font-size:14px; font-weight:600; margin-bottom:24px; }
-  .field { margin-bottom:20px; }
-  label { display:block; font-size:12px; font-weight:500; color:var(--text-mid); margin-bottom:6px; letter-spacing:0.2px; }
+  .setup-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:32px;max-width:480px;}
+  .setup-card h2{font-size:14px;font-weight:600;margin-bottom:24px;}
+  .field{margin-bottom:20px;}
+  label{display:block;font-size:12px;font-weight:500;color:var(--text-mid);margin-bottom:6px;letter-spacing:0.2px;}
 
-  select,input[type="text"],input[type="number"],input[type="password"] { width:100%; background:var(--surface); border:1px solid var(--border); border-radius:6px; color:var(--text); padding:9px 12px; font-family:'Inter',sans-serif; font-size:14px; outline:none; transition:border-color 0.15s,box-shadow 0.15s; appearance:none; -webkit-appearance:none; }
-  select { background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%236b6b65' d='M6 8L1 3h10z'/%3E%3C/svg%3E"); background-repeat:no-repeat; background-position:right 12px center; padding-right:32px; }
-  select:focus,input:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(26,26,24,.06); }
+  select,input[type="text"],input[type="number"],input[type="password"]{width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:9px 12px;font-family:'Inter',sans-serif;font-size:14px;outline:none;transition:border-color 0.15s,box-shadow 0.15s;appearance:none;-webkit-appearance:none;}
+  select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%236b6b65' d='M6 8L1 3h10z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:32px;}
+  select:focus,input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(26,26,24,.06);}
 
-  .player-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-  .player-input { position:relative; }
-  .player-num { position:absolute; left:10px; top:50%; transform:translateY(-50%); font-size:11px; font-weight:600; color:var(--text-dim); pointer-events:none; z-index:1; }
-  .player-input input { padding-left:28px; }
+  .player-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+  .player-input{position:relative;}
+  .player-num{position:absolute;left:10px;top:50%;transform:translateY(-50%);font-size:11px;font-weight:600;color:var(--text-dim);pointer-events:none;z-index:1;}
+  .player-input input{padding-left:28px;}
 
-  .btn { display:inline-block; padding:10px 20px; background:var(--accent); border:none; border-radius:6px; color:#fff; font-family:'Inter',sans-serif; font-size:13px; font-weight:500; cursor:pointer; margin-top:8px; transition:background 0.15s; width:100%; text-align:center; }
-  .btn:hover { background:var(--accent-hover); }
-  .btn:active { transform:scale(.99); }
+  .btn{display:inline-block;padding:10px 20px;background:var(--accent);border:none;border-radius:6px;color:#fff;font-family:'Inter',sans-serif;font-size:13px;font-weight:500;cursor:pointer;margin-top:8px;transition:background 0.15s;width:100%;text-align:center;}
+  .btn:hover{background:var(--accent-hover);}
+  .btn:active{transform:scale(.99);}
 
-  .round-block { margin-bottom:32px; }
-  .round-label { font-size:11px; font-weight:600; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.8px; margin-bottom:10px; display:flex; align-items:center; gap:12px; }
-  .round-label::after { content:''; flex:1; height:1px; background:var(--border); }
+  .round-block{margin-bottom:32px;}
+  .round-label{font-size:11px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:10px;display:flex;align-items:center;gap:12px;}
+  .round-label::after{content:'';flex:1;height:1px;background:var(--border);}
 
-  .fixture-row { display:grid; grid-template-columns:1fr 44px 70px 32px 70px 44px 1fr; align-items:center; gap:8px; background:var(--surface); border:1px solid var(--border); border-radius:6px; padding:10px 14px; margin-bottom:6px; transition:border-color 0.15s; }
-  .fixture-row:hover { border-color:var(--border-strong); }
-  .fixture-row.bye { opacity:0.4; }
-  .player-name { font-size:14px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .home { text-align:right; }
-  .away { text-align:left; }
-  .vs-label { font-size:11px; color:var(--text-dim); font-weight:500; text-align:center; }
+  .fixture-row{display:grid;grid-template-columns:1fr 44px 70px 32px 70px 44px 1fr;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:10px 14px;margin-bottom:6px;transition:border-color 0.15s;}
+  .fixture-row:hover{border-color:var(--border-strong);}
+  .fixture-row.bye{opacity:0.4;}
+  .fixture-row.tbd-row{opacity:0.5;}
+  .player-name{font-size:14px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .home{text-align:right;}
+  .away{text-align:left;}
+  .vs-label{font-size:11px;color:var(--text-dim);font-weight:500;text-align:center;}
+  .tbd{color:var(--text-dim);font-style:italic;font-weight:400;}
 
-  .score-input { width:100%; background:var(--bg); border:1px solid var(--border); border-radius:5px; color:var(--text); padding:7px 6px; font-family:'Inter',sans-serif; font-size:15px; font-weight:600; text-align:center; outline:none; transition:border-color 0.15s; }
-  .score-input:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(26,26,24,.06); }
-  .score-input[readonly] { opacity:0.35; cursor:not-allowed; }
+  .score-input{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);padding:7px 6px;font-family:'Inter',sans-serif;font-size:15px;font-weight:600;text-align:center;outline:none;transition:border-color 0.15s;}
+  .score-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(26,26,24,.06);}
+  .score-input[readonly]{opacity:0.35;cursor:not-allowed;}
 
-  .result-badge { font-size:10px; font-weight:600; padding:3px 6px; border-radius:4px; text-align:center; letter-spacing:0.3px; min-width:28px; }
-  .result-W { background:var(--win-bg); color:var(--win-text); }
-  .result-L { background:var(--loss-bg); color:var(--loss-text); }
-  .result-D { background:var(--draw-bg); color:var(--draw-text); }
-  .result-empty { visibility:hidden; }
+  .result-badge{font-size:10px;font-weight:600;padding:3px 6px;border-radius:4px;text-align:center;letter-spacing:0.3px;min-width:28px;}
+  .result-W{background:var(--win-bg);color:var(--win-text);}
+  .result-L{background:var(--loss-bg);color:var(--loss-text);}
+  .result-D{background:var(--draw-bg);color:var(--draw-text);}
+  .result-empty{visibility:hidden;}
 
-  .table-wrap { overflow-x:auto; }
-  table { width:100%; border-collapse:collapse; background:var(--surface); border:1px solid var(--border); border-radius:8px; overflow:hidden; }
-  thead tr { border-bottom:1px solid var(--border); }
-  th { padding:11px 16px; font-size:11px; font-weight:600; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.5px; text-align:center; white-space:nowrap; background:var(--bg); }
-  th:first-child { text-align:center; width:44px; }
-  th:nth-child(2) { text-align:left; }
-  tbody tr { border-bottom:1px solid var(--border); transition:background 0.1s; }
-  tbody tr:last-child { border-bottom:none; }
-  tbody tr:hover { background:var(--bg); }
-  td { padding:13px 16px; text-align:center; font-size:14px; color:var(--text-mid); }
-  td:first-child { width:44px; }
-  td:nth-child(2) { text-align:left; font-weight:600; color:var(--text); }
-  .rank-num { font-size:12px; font-weight:600; color:var(--text-dim); width:24px; height:24px; display:inline-flex; align-items:center; justify-content:center; border-radius:50%; }
-  .rank-1 .rank-num { background:#fef3c7; color:#92680a; }
-  .rank-2 .rank-num { background:#f1f5f9; color:#475569; }
-  .rank-3 .rank-num { background:#fdf4ef; color:#9a4f1e; }
-  .stat-pts { color:var(--text); font-weight:600; }
-  .stat-pos { color:var(--win-text); }
-  .stat-neg { color:var(--loss-text); }
-  .stat-zero { color:var(--text-dim); }
+  .table-wrap{overflow-x:auto;}
+  table{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:hidden;}
+  thead tr{border-bottom:1px solid var(--border);}
+  th{padding:11px 16px;font-size:11px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;text-align:center;white-space:nowrap;background:var(--bg);}
+  th:first-child{text-align:center;width:44px;}
+  th:nth-child(2){text-align:left;}
+  tbody tr{border-bottom:1px solid var(--border);transition:background 0.1s;}
+  tbody tr:last-child{border-bottom:none;}
+  tbody tr:hover{background:var(--bg);}
+  td{padding:13px 16px;text-align:center;font-size:14px;color:var(--text-mid);}
+  td:first-child{width:44px;}
+  td:nth-child(2){text-align:left;font-weight:600;color:var(--text);}
+  .rank-num{font-size:12px;font-weight:600;color:var(--text-dim);width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;}
+  .rank-1 .rank-num{background:#fef3c7;color:#92680a;}
+  .rank-2 .rank-num{background:#f1f5f9;color:#475569;}
+  .rank-3 .rank-num{background:#fdf4ef;color:#9a4f1e;}
+  .stat-pts{color:var(--text);font-weight:600;}
+  .stat-pos{color:var(--win-text);}
+  .stat-neg{color:var(--loss-text);}
+  .stat-zero{color:var(--text-dim);}
 
-  .empty-state { text-align:center; padding:64px 20px; color:var(--text-dim); font-size:13px; }
-  .empty-state .empty-icon { font-size:28px; display:block; margin-bottom:12px; opacity:0.4; }
-  .empty-state p { margin-top:6px; font-size:12px; }
+  /* Knockout setup */
+  .ko-setup-divider{height:1px;background:var(--border);margin:32px 0;}
+  .ko-setup-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:24px;}
+  .ko-setup-title{font-size:14px;font-weight:600;margin-bottom:6px;}
+  .ko-setup-desc{font-size:12px;color:var(--text-mid);margin-bottom:18px;}
+  .ko-options{display:flex;gap:10px;flex-wrap:wrap;}
+  .ko-option-btn{padding:12px 20px;background:var(--bg);border:1px solid var(--border);border-radius:8px;cursor:pointer;font-family:'Inter',sans-serif;font-size:13px;font-weight:600;color:var(--text);transition:border-color 0.15s,background 0.15s;display:flex;flex-direction:column;align-items:center;gap:3px;min-width:110px;}
+  .ko-option-btn span{font-size:11px;font-weight:400;color:var(--text-dim);}
+  .ko-option-btn:hover{border-color:var(--accent);background:var(--surface);}
+
+  /* Champion banner */
+  .champion-banner{background:linear-gradient(135deg,#fef3c7,#fde68a);border:1px solid #f59e0b;border-radius:8px;padding:16px 24px;text-align:center;font-size:15px;font-weight:600;color:#92400e;margin-top:8px;}
+
+  .empty-state{text-align:center;padding:64px 20px;color:var(--text-dim);font-size:13px;}
+  .empty-state .empty-icon{font-size:28px;display:block;margin-bottom:12px;opacity:0.4;}
+  .empty-state p{margin-top:6px;font-size:12px;}
 
   /* modals */
-  .modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:100; align-items:center; justify-content:center; padding:16px; }
-  .modal-overlay.open { display:flex; }
-  .modal-box { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:28px; width:100%; max-width:460px; box-shadow:0 8px 32px rgba(0,0,0,.12); }
-  .modal-box h2 { font-size:15px; font-weight:600; margin-bottom:6px; }
-  .modal-desc { font-size:12px; color:var(--text-mid); margin-bottom:20px; }
-  .modal-field { margin-bottom:16px; }
-  .copy-row { display:flex; gap:8px; }
-  .copy-row input { flex:1; font-size:12px; background:var(--bg); color:var(--text-mid); padding:8px 10px; }
-  .btn-copy { padding:8px 14px; background:var(--accent); border:none; border-radius:6px; color:#fff; font-family:'Inter',sans-serif; font-size:12px; font-weight:500; cursor:pointer; white-space:nowrap; flex-shrink:0; transition:background 0.15s; }
-  .btn-copy:hover { background:var(--accent-hover); }
-  .btn-copy.copied { background:var(--win-text); }
-  .modal-footer { display:flex; justify-content:flex-end; gap:8px; margin-top:20px; }
-  .error-msg { font-size:12px; color:var(--loss-text); margin-top:6px; display:none; }
-  .error-msg.visible { display:block; }
+  .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:100;align-items:center;justify-content:center;padding:16px;}
+  .modal-overlay.open{display:flex;}
+  .modal-box{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:28px;width:100%;max-width:460px;box-shadow:0 8px 32px rgba(0,0,0,.12);}
+  .modal-box h2{font-size:15px;font-weight:600;margin-bottom:6px;}
+  .modal-desc{font-size:12px;color:var(--text-mid);margin-bottom:20px;}
+  .modal-field{margin-bottom:16px;}
+  .copy-row{display:flex;gap:8px;}
+  .copy-row input{flex:1;font-size:12px;background:var(--bg);color:var(--text-mid);padding:8px 10px;}
+  .btn-copy{padding:8px 14px;background:var(--accent);border:none;border-radius:6px;color:#fff;font-family:'Inter',sans-serif;font-size:12px;font-weight:500;cursor:pointer;white-space:nowrap;flex-shrink:0;transition:background 0.15s;}
+  .btn-copy:hover{background:var(--accent-hover);}
+  .btn-copy.copied{background:var(--win-text);}
+  .modal-footer{display:flex;justify-content:flex-end;gap:8px;margin-top:20px;}
+  .error-msg{font-size:12px;color:var(--loss-text);margin-top:6px;display:none;}
+  .error-msg.visible{display:block;}
 
   @media(max-width:600px){
     header{padding:16px;} .container{padding:20px 12px;} .setup-card{padding:20px;}
     .player-grid{grid-template-columns:1fr;}
     .fixture-row{grid-template-columns:1fr 36px 58px 24px 58px 36px 1fr;padding:8px 10px;gap:5px;}
     .player-name{font-size:13px;} th,td{padding:10px;}
+    .ko-options{flex-direction:column;} .ko-option-btn{min-width:unset;}
   }
 </style>
 </head>
@@ -524,8 +663,10 @@
     <button class="tab active" onclick="switchTab('setup')">Setup</button>
     <button class="tab" onclick="switchTab('fixtures')">Fixtures</button>
     <button class="tab" onclick="switchTab('table')">League Table</button>
+    <button class="tab" id="tab-knockout" onclick="switchTab('knockout')" style="display:none">Knockout</button>
   </div>
 
+  <!-- SETUP -->
   <div id="panel-setup" class="panel active">
     <div class="setup-card">
       <h2>New Tournament</h2>
@@ -554,6 +695,7 @@
     </div>
   </div>
 
+  <!-- FIXTURES -->
   <div id="panel-fixtures" class="panel">
     <div id="fixtures-content">
       <div class="empty-state">
@@ -563,6 +705,7 @@
     </div>
   </div>
 
+  <!-- LEAGUE TABLE -->
   <div id="panel-table" class="panel">
     <div class="table-wrap">
       <table>
@@ -577,6 +720,17 @@
         </tbody>
       </table>
     </div>
+    <div id="knockout-setup"></div>
+  </div>
+
+  <!-- KNOCKOUT -->
+  <div id="panel-knockout" class="panel">
+    <div id="knockout-content">
+      <div class="empty-state">
+        <span class="empty-icon">⚡</span>No knockout stage yet
+        <p>Complete the league stage then start a knockout from the League Table tab.</p>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -586,14 +740,14 @@
     <h2>Share Tournament</h2>
     <p class="modal-desc">Anyone with this link can view live scores. Bookmark it — it always shows the latest results.<br><br>To allow someone to enter scores, give them the <strong>Edit Code</strong> below.</p>
     <div class="modal-field">
-      <label>Tournament Link (bookmark-friendly)</label>
+      <label>Tournament Link</label>
       <div class="copy-row">
         <input type="text" id="share-link-input" readonly>
         <button class="btn-copy" onclick="copyLink('share-link-input',this)">Copy</button>
       </div>
     </div>
     <div class="modal-field">
-      <label>Edit Code (keep private — share only with scorekeepers)</label>
+      <label>Edit Code (keep private)</label>
       <div class="copy-row">
         <input type="text" id="edit-code-display" readonly>
         <button class="btn-copy" onclick="copyLink('edit-code-display',this)">Copy</button>
