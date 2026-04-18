@@ -75,7 +75,8 @@
     renderFixtures();
     renderTable();
     renderKnockout();
-    switchTab('fixtures');
+    renderOverview();
+    switchTab(isEditMode ? 'fixtures' : 'overview');
   }
 
   function startViewerListener() {
@@ -87,6 +88,7 @@
       renderFixtures();
       renderTable();
       renderKnockout();
+      renderOverview();
     });
   }
 
@@ -314,6 +316,7 @@
     state.knockout = { advancing, rounds };
     scheduleSave({knockout:state.knockout});
     renderKnockout();
+    renderOverview();
     renderKnockoutSetup();
     switchTab('knockout');
   };
@@ -420,14 +423,96 @@
     clearDownstream(ri+1,nextFi);
   }
 
+  // ── Overview ───────────────────────────────────────────────────────────────
+  function renderOverview() {
+    const cont = document.getElementById('overview-content');
+    if (!state.players.length) {
+      cont.innerHTML = `<div class="empty-state"><span class="empty-icon">◫</span>No tournament yet
+        <p>Set up your tournament to see the overview.</p></div>`;
+      return;
+    }
+
+    const standings = calcTable();
+    const pts = r => r.won*3 + r.drew;
+    const diff = r => r.for - r.against;
+
+    // League table
+    let html = `<div class="ov-section">
+      <div class="ov-heading">League Table</div>
+      <div class="table-wrap"><table>
+        <thead><tr>
+          <th>#</th><th>Player</th><th>P</th><th>W</th><th>D</th><th>L</th>
+          <th>For</th><th>Against</th><th>Diff</th><th>Pts</th>
+        </tr></thead>
+        <tbody>${standings.map((r,i)=>{
+          const rank=i+1, d=diff(r), p=pts(r);
+          const dc=d>0?'stat-pos':d<0?'stat-neg':'stat-zero';
+          const ds=r.played>0?(d>0?`+${d}`:`${d}`):'—';
+          return `<tr class="${rank<=3?'rank-'+rank:''}">
+            <td><span class="rank-num">${rank}</span></td><td>${r.name}</td>
+            <td>${r.played}</td><td>${r.won}</td><td>${r.drew}</td><td>${r.lost}</td>
+            <td>${r.for}</td><td>${r.against}</td>
+            <td class="${dc}">${ds}</td><td class="stat-pts">${p}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table></div>
+    </div>`;
+
+    // Knockout bracket
+    if (state.knockout) {
+      const {rounds} = state.knockout;
+      const total = rounds.length;
+
+      // Champion
+      const fin = rounds[total-1][0];
+      const finDone = fin.s1!==null && fin.s2!==null && fin.s1!==fin.s2;
+      if (finDone) {
+        const champ = parseInt(fin.s1)>parseInt(fin.s2) ? fin.p1 : fin.p2;
+        html += `<div class="champion-banner" style="margin-bottom:24px">🏆 ${state.players[champ]} wins the tournament!</div>`;
+      }
+
+      html += `<div class="ov-section"><div class="ov-heading">Knockout Stage</div>
+        <div class="bracket-grid" style="--cols:${total}">`;
+
+      rounds.forEach((round, ri) => {
+        html += `<div class="bracket-col">
+          <div class="bracket-col-label">${knockoutRoundName(ri, total)}</div>`;
+        round.forEach(match => {
+          const n1 = match.p1!==null ? state.players[match.p1] : null;
+          const n2 = match.p2!==null ? state.players[match.p2] : null;
+          const played = match.s1!==null && match.s2!==null;
+          const w1 = played && parseInt(match.s1)>parseInt(match.s2);
+          const w2 = played && parseInt(match.s2)>parseInt(match.s1);
+          html += `<div class="bracket-match">
+            <div class="bm-row${w1?' bm-winner':w2?' bm-loser':''}">
+              <span class="bm-name">${n1||'<span class="tbd">TBD</span>'}</span>
+              <span class="bm-score">${match.s1!==null?match.s1:'–'}</span>
+            </div>
+            <div class="bm-divider"></div>
+            <div class="bm-row${w2?' bm-winner':w1?' bm-loser':''}">
+              <span class="bm-name">${n2||'<span class="tbd">TBD</span>'}</span>
+              <span class="bm-score">${match.s2!==null?match.s2:'–'}</span>
+            </div>
+          </div>`;
+        });
+        html += '</div>';
+      });
+
+      html += '</div></div>';
+    }
+
+    cont.innerHTML = html;
+  }
+
   // ── Tabs ───────────────────────────────────────────────────────────────────
   window.switchTab = function(name) {
-    const names=['setup','fixtures','table','knockout'];
+    const names=['setup','overview','fixtures','table','knockout'];
     document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',names[i]===name));
     document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
     document.getElementById('panel-'+name).classList.add('active');
     if (name==='table') renderTable();
     if (name==='knockout') renderKnockout();
+    if (name==='overview') renderOverview();
   };
 
   // ── Header ─────────────────────────────────────────────────────────────────
@@ -478,7 +563,8 @@
       localStorage.setItem(tokenKey(tourneyId),input);
       if (viewerUnsub) { viewerUnsub(); viewerUnsub=null; }
       closeModal('edit-modal');
-      updateHeader(); renderFixtures(); renderTable(); renderKnockout();
+      updateHeader(); renderFixtures(); renderTable(); renderKnockout(); renderOverview();
+      switchTab('fixtures');
     } else {
       errEl.textContent='Incorrect edit code. Try again.';
       errEl.classList.add('visible');
@@ -631,12 +717,31 @@
   .error-msg{font-size:12px;color:var(--loss-text);margin-top:6px;display:none;}
   .error-msg.visible{display:block;}
 
+  /* Overview */
+  .ov-section{margin-bottom:36px;}
+  .ov-heading{font-size:11px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:14px;display:flex;align-items:center;gap:12px;}
+  .ov-heading::after{content:'';flex:1;height:1px;background:var(--border);}
+
+  .bracket-grid{display:grid;grid-template-columns:repeat(var(--cols),1fr);gap:12px;align-items:start;}
+  .bracket-col{display:flex;flex-direction:column;gap:10px;}
+  .bracket-col-label{font-size:11px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:4px;text-align:center;}
+
+  .bracket-match{background:var(--surface);border:1px solid var(--border);border-radius:7px;overflow:hidden;}
+  .bm-row{display:flex;align-items:center;justify-content:space-between;padding:9px 12px;gap:8px;transition:background 0.1s;}
+  .bm-row.bm-winner{background:var(--win-bg);}
+  .bm-row.bm-loser{opacity:0.5;}
+  .bm-name{font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;}
+  .bm-score{font-size:14px;font-weight:700;color:var(--text);flex-shrink:0;min-width:18px;text-align:right;}
+  .bm-row.bm-winner .bm-score{color:var(--win-text);}
+  .bm-divider{height:1px;background:var(--border);}
+
   @media(max-width:600px){
     header{padding:16px;} .container{padding:20px 12px;} .setup-card{padding:20px;}
     .player-grid{grid-template-columns:1fr;}
     .fixture-row{grid-template-columns:1fr 36px 58px 24px 58px 36px 1fr;padding:8px 10px;gap:5px;}
     .player-name{font-size:13px;} th,td{padding:10px;}
     .ko-options{flex-direction:column;} .ko-option-btn{min-width:unset;}
+    .bracket-grid{grid-template-columns:1fr;}
   }
 </style>
 </head>
@@ -661,6 +766,7 @@
 <div class="container">
   <div class="tabs">
     <button class="tab active" onclick="switchTab('setup')">Setup</button>
+    <button class="tab" onclick="switchTab('overview')">Overview</button>
     <button class="tab" onclick="switchTab('fixtures')">Fixtures</button>
     <button class="tab" onclick="switchTab('table')">League Table</button>
     <button class="tab" id="tab-knockout" onclick="switchTab('knockout')" style="display:none">Knockout</button>
@@ -692,6 +798,16 @@
         <div class="player-grid" id="playerGrid"></div>
       </div>
       <button class="btn" onclick="generateTournament()">Generate Fixtures &amp; Get Share Link</button>
+    </div>
+  </div>
+
+  <!-- OVERVIEW -->
+  <div id="panel-overview" class="panel">
+    <div id="overview-content">
+      <div class="empty-state">
+        <span class="empty-icon">◫</span>No tournament yet
+        <p>Set up your tournament to see the overview.</p>
+      </div>
     </div>
   </div>
 
